@@ -7,6 +7,28 @@ select the minimal set of tests to run.
 
 This is the same idea Google/Meta run internally (Test Impact Analysis).
 
+## Honest disclosure (read this first)
+
+Test selection has exactly one cardinal sin: skipping a test that would
+have failed. A tool you can't trust on that is worse than no tool. So
+before any feature list, here is where this project earned — or failed to
+earn — that trust.
+
+While benchmarking on Flask, an early run reported a **median skip rate of
+73%**. It looked great. It was a lie. coverage.py's default measurement
+core on Python 3.12+ (`sysmon`) records only the *first* test to hit each
+line and silently drops the rest, so any test that reused a shared helper
+was never mapped — and changing that helper would have skipped them. The
+high number was false negatives wearing a costume. We forced the C tracer
+(`COVERAGE_CORE=ctrace`), every test mapped, and the number fell to the
+truth: **median ~21% skip on Flask** (≈40% mean; cosmetic commits 99%+).
+The toy demo could never have shown this — only a real codebase did.
+
+So the numbers below are deliberately the *lower bound*: Flask is small
+and tightly coupled, near the worst case for test selection. We'd rather
+publish the honest floor than a cherry-picked ceiling. Full story and
+the per-commit table: [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
+
 ## How it works
 
 1. **`tia record`** runs the full suite once with a pytest plugin that
