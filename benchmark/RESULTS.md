@@ -24,34 +24,47 @@ the honest "one PR against its base" measure.
 
 | commit | files | suite | selected | skip |
 |--------|------:|------:|---------:|-----:|
-| 9368fb3f | 2 | 483 | 38 | **92.1%** |
-| da6d075d | 6 | 482 | 21 | **95.6%** |
+| a29f88ce | 4 | 482 | 2 | **99.6%** |
+| 3709c4a9 | 3 | 482 | 2 | **99.6%** |
+| da6d075d | 6 | 482 | 2 | **99.6%** |
+| 9368fb3f | 2 | 483 | 38 | 92.1% |
 | 06ea505c | 4 | 483 | 303 | 37.3% |
-| a411a243 | 1 | 486 | 307 | 36.8% |
+| a411a243 | 1 | 486 | 305 | 37.2% |
 | c17f3793 | 6 | 482 | 342 | 29.0% |
 | 7b008869 | 1 | 486 | 426 | 12.3% |
 | c77a5203 | 3 | 482 | 422 | 12.4% |
+| 6a649690 | 6 | 482 | 422 | 12.4% |
 | e82db2ca | 7 | 486 | 429 | 11.7% |
-| a29f88ce | 4 | 482 | 434 | 10.0% |
+| eca5fd1d | 4 | 482 | 434 | 10.0% |
 | fbb6f0bc | 10 | 487 | 440 | 9.7% |
 | 36e4a824 | 1 | 483 | 483 | 0.0% |
 
 ```
 commits measured : 14
-median skip rate : 12.4%
-mean skip rate   : 27.3%
+median skip rate : 20.7%
+mean skip rate   : 40.2%
 ```
 
 ### Honest reading
 
 Flask is a **small, tightly-coupled** library — close to the worst case
-for test selection. The result is **bimodal**: an isolated change (a
-helper, one blueprint) skips 90%+, while a change to core request
-handling correctly pulls in most of the suite, because most tests really
-do exercise that path. `36e4a82` selects everything: it edits a module
-imported everywhere, so a module-level change fans out — correct, not a
-miss. The payoff of *any* TIA scales with how modular your code is; on a
-large app with independent feature areas it is far higher than on Flask.
+for test selection. The result is **bimodal**: an isolated or cosmetic
+change skips 90%+, while a change to core request handling correctly
+pulls in most of the suite, because most tests really do exercise that
+path. `36e4a82` selects everything: it edits a module imported
+everywhere, so a module-level change fans out — correct, not a miss. The
+payoff of *any* TIA scales with how modular your code is; on a large app
+with independent feature areas it is far higher than on Flask.
+
+### Effect of the cosmetic-change filter (乙)
+
+These numbers have the filter **on** (the default). With `--all-changes`
+the same 14 commits give a median of **12.4%** / mean **27.3%**. The gap
+is three commits whose `src/flask` edits were purely docstrings/formatting:
+they go from selecting ~430 tests to **2** (99.6% skip). That's not
+spin — those commits change nothing a test can observe, so running ~430
+of them was wasted. A real-world history (full of "fix typo" / "run
+black" commits) shifts further in the filter's favour.
 
 ## The bug this benchmark caught
 

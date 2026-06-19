@@ -4,7 +4,7 @@ import os
 import threading
 from http.server import ThreadingHTTPServer
 
-from tia import astmap, dynscan, remotestore, resolve, select, server
+from tia import astmap, dynscan, remotestore, resolve, select, semantic, server
 
 SOURCE = '''\
 import os
@@ -220,6 +220,44 @@ def test_server_rejects_path_traversal(tmp_path):
     assert server._resolve(str(tmp_path), "/maps/../secret") is None
     assert server._resolve(str(tmp_path), "/etc/passwd") is None
     assert server._resolve(str(tmp_path), "/maps/") is None
+
+
+# --- 乙 cosmetic vs semantic change detection ----------------------------
+
+def test_semantic_comment_only_change_is_cosmetic():
+    old = "def f(x):\n    return x + 1  # add one\n"
+    new = "def f(x):\n    return x + 1  # adds one to x\n"
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_semantic_docstring_and_format_changes_are_cosmetic():
+    old = 'def f(x):\n    """Old doc."""\n    return x+1\n'
+    new = 'def f(x):\n    """A much longer, rewritten docstring."""\n    return x + 1\n'
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_semantic_blank_line_change_is_cosmetic():
+    old = "def f():\n    return 1\ndef g():\n    return 2\n"
+    new = "def f():\n    return 1\n\n\ndef g():\n    return 2\n"
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_semantic_real_code_change_is_semantic():
+    old = "def f(x):\n    return x + 1\n"
+    new = "def f(x):\n    return x + 2\n"
+    assert semantic.is_semantic_change(old, new) is True
+
+
+def test_semantic_uncommenting_is_semantic_not_cosmetic():
+    # The trap: old line is a comment, but uncommenting it IS a real change.
+    # Only an old-vs-new comparison catches this; classifying lines wouldn't.
+    old = "def f():\n    # x = compute()\n    return 0\n"
+    new = "def f():\n    x = compute()\n    return 0\n"
+    assert semantic.is_semantic_change(old, new) is True
+
+
+def test_semantic_unparseable_is_conservative():
+    assert semantic.is_semantic_change("def f(:\n", "def f():\n    pass\n") is True
 
 
 # --- recorder: every test that hits a shared line must be mapped ----------

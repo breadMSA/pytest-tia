@@ -48,6 +48,15 @@ in/out of it. `--trust-dynamic` opts out. This is mitigation, not a
 solution; nothing resolves dynamic dispatch precisely (it's undecidable
 in general), so still run the full suite on a cadence.
 
+A **cosmetic-change filter** sits *underneath* everything: before
+selecting, a changed `.py` file whose edit is only comments, whitespace,
+or docstrings is dropped entirely. The test is the AST — comments and
+formatting aren't in it, docstrings are stripped before comparing — and
+it compares the **old and new** trees, so uncommenting a line still
+counts as real. So a "fix typo" / "add docstring" / "run black" commit on
+a core file selects *nothing* instead of half the suite. `--all-changes`
+opts out. Safe by construction: it only removes false positives.
+
 ## Usage
 
 ```sh
@@ -130,7 +139,8 @@ where that blob may not be fetched. The diff itself still needs the base
 - [x] **Real-repo benchmark** — measured on Flask; see
   [`benchmark/RESULTS.md`](benchmark/RESULTS.md). It also caught a
   recorder false-negative bug (the `sysmon` core dropping contexts).
-- [ ] **Real-repo benchmark** — skip-rate / miss-rate on OSS suites.
+- [x] **Cosmetic-change filter** — ignore comment/docstring/format-only
+  edits so they select nothing instead of a whole file.
 
 ## Demo
 

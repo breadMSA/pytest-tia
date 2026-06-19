@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from tia import astmap, diff, dynscan, remotestore, resolve, select, server, store
+from tia import astmap, diff, dynscan, remotestore, resolve, select, semantic, server, store
 from tia.plugin import RecordPlugin
 
 
@@ -52,6 +52,25 @@ def _lines_to_quals(root: str, line_map: dict[str, dict[str, set[int]]]):
             quals[rel] = {l2q[ln] for ln in lines if ln in l2q}
         result[nodeid] = quals
     return result, cache
+
+
+def _cosmetic_files(changed: dict, ref: str, root: str) -> set[str]:
+    """.py files in the diff whose change is only comments/whitespace/docstrings."""
+    out: set[str] = set()
+    for path in changed:
+        if not path.endswith(".py"):
+            continue
+        old = resolve._git_show(ref, path, root)
+        if old is None:
+            continue  # new/unavailable at ref — let normal selection handle it
+        try:
+            with open(os.path.join(root, path), encoding="utf-8") as fh:
+                new = fh.read()
+        except OSError:
+            continue  # deleted in the worktree — a real change
+        if not semantic.is_semantic_change(old, new):
+            out.add(path)
+    return out
 
 
 def cmd_record(args) -> int:
@@ -108,6 +127,15 @@ def cmd_run(args) -> int:
     ref = args.since or tia_map.get("ref") or "HEAD"
 
     changed = diff.changed_lines(ref, cwd=root)
+    # 乙: drop .py files whose change is only comments/whitespace/docstrings,
+    # unless the user opts out. Best-effort — needs the old blob (skipped if
+    # unavailable, e.g. a shallow clone without the base fetched).
+    cosmetic: set[str] = set()
+    if not args.all_changes:
+        cosmetic = _cosmetic_files(changed, ref, root)
+        for path in cosmetic:
+            del changed[path]
+
     func_changes, module_files = resolve.changed_functions(
         changed, ref, root, tia_map.get("funcmaps"))
     data_changes = {p for p in changed if not p.endswith(".py")}
@@ -144,6 +172,8 @@ def cmd_run(args) -> int:
         else:
             tag = "no covered funcs"
         print(f"       ~ {path}: {tag}")
+    for path in sorted(cosmetic):
+        print(f"       ~ {path}: comments/docstring/format only - ignored")
     for nodeid, reason in sorted(selected.items()):
         print(f"       -> {nodeid}   ({reason})")
 
@@ -226,6 +256,8 @@ def main(argv=None) -> int:
     run.add_argument("--remote", help="remote dir to pull the map from if absent locally")
     run.add_argument("--trust-dynamic", action="store_true",
                      help="don't widen reflection-heavy files to file-level (less safe)")
+    run.add_argument("--all-changes", action="store_true",
+                     help="don't ignore comment/docstring/format-only edits")
     run.set_defaults(func=cmd_run)
 
     push = sub.add_parser("push", help="publish the local map to a shared remote (for CI)")
