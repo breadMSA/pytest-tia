@@ -1,6 +1,6 @@
 import pytest
 
-from calc import add, sub, mul, div
+from calc import add, sub, mul, div, apply_tax
 
 
 def test_add():
@@ -22,3 +22,8 @@ def test_div():
 def test_div_by_zero():
     with pytest.raises(ZeroDivisionError):
         div(1, 0)
+
+
+def test_apply_tax():
+    # Depends on tax.json, not on any line of calc.py's logic.
+    assert apply_tax(100) == pytest.approx(110)

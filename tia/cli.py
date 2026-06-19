@@ -61,8 +61,10 @@ def cmd_record(args) -> int:
     code = pytest.main(pytest_args, plugins=[plugin])
 
     quals = _lines_to_quals(root, plugin.result)
-    path = store.save_map(root, quals, ref=_head_sha(root))
-    print(f"\n[tia] recorded {len(quals)} tests -> {path}")
+    path = store.save_map(root, quals, ref=_head_sha(root), reads=plugin.reads)
+    n_reads = sum(len(v) for v in plugin.reads.values())
+    print(f"\n[tia] recorded {len(quals)} tests "
+          f"({n_reads} non-py read deps) -> {path}")
     return int(code) if code not in (0, 5) else 0
 
 
@@ -78,9 +80,12 @@ def cmd_run(args) -> int:
 
     changed = diff.changed_lines(ref, cwd=root)
     func_changes, module_files = resolve.changed_functions(changed, ref, root)
+    data_changes = {p for p in changed if not p.endswith(".py")}
+    reads = tia_map.get("reads", {})
     all_nodeids = _collect_nodeids(args.path)
     selected = select.select_tests(
-        tia_map["tests"], func_changes, module_files, all_nodeids
+        tia_map["tests"], func_changes, module_files, all_nodeids,
+        data_changes, reads,
     )
 
     total = len(all_nodeids)
@@ -89,8 +94,15 @@ def cmd_run(args) -> int:
           f"tests in suite: {total} | selected: {n}")
     for path in sorted(changed):
         funcs = func_changes.get(path)
-        tag = ", ".join(sorted(funcs)) if funcs else (
-            "module-level" if path in module_files else "no covered funcs")
+        if funcs:
+            tag = ", ".join(sorted(funcs))
+        elif path in module_files:
+            tag = "module-level"
+        elif path in data_changes:
+            n_readers = sum(1 for f in reads.values() if path in f)
+            tag = f"data dep ({n_readers} reader{'' if n_readers == 1 else 's'})"
+        else:
+            tag = "no covered funcs"
         print(f"       ~ {path}: {tag}")
     for nodeid, reason in sorted(selected.items()):
         print(f"       -> {nodeid}   ({reason})")

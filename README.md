@@ -32,7 +32,12 @@ This is the same idea Google/Meta run internally (Test Impact Analysis).
    (constant, import, class body). Runs every test touching that file.
    Module-level *insertions* (a new function/test) are ignored so they
    don't drag the whole file in.
-3. **New test** — any collected test not in the map has never been
+3. **Data dependency** — a non-`.py` file changed (config, fixture,
+   template). Runs every test that *opened* that file while recording.
+   These reads are captured with a `sys.addaudithook` on the `open`
+   event, so dependencies coverage can't see don't become silent
+   false negatives.
+4. **New test** — any collected test not in the map has never been
    measured, so it always runs.
 
 ## Usage
@@ -58,9 +63,10 @@ nodeids and file paths stay consistent.
 - **Coordinate sync.** The map is stamped with the ref it was recorded
   at and `run` diffs against it automatically. Re-run `tia record`
   after you commit so the map stays fresh.
-- **Non-Python dependencies** (config files, JSON fixtures, templates)
-  aren't tracked yet — a test that reads `config.yaml` won't be
-  selected when only that file changes. *(Roadmap: silent deps.)*
+- **Read deps are call-phase only.** A file opened during fixture
+  setup/teardown (not the test body) isn't attributed to the test, the
+  same boundary coverage uses. Files read in a subprocess or another
+  thread can also be missed.
 - **Dynamic dispatch / reflection / subprocesses** aren't traced by
   coverage and can hide a real dependency. Re-record periodically and
   run the full suite on a cadence as a safety net.
@@ -68,7 +74,7 @@ nodeids and file paths stay consistent.
 ## Roadmap
 
 - [x] **Method-level analysis** (AST) — done.
-- [ ] **Silent dependencies** — track non-`.py` files each test reads.
+- [x] **Silent dependencies** — track non-`.py` files each test reads.
 - [ ] **CI mode** — remote map storage + shallow-clone-safe diffing.
 - [ ] **Static fallback** for dynamic dispatch / DI frameworks.
 

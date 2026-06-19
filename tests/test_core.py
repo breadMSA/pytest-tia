@@ -67,3 +67,26 @@ def test_select_new_test_always_runs():
 def test_select_unrelated_change_runs_nothing():
     sel = select.select_tests(MAP, {"calc.py": {"sub"}}, set(), {"t_add", "t_mul"})
     assert sel == {}
+
+
+READS = {
+    "t_tax": {"tax.json"},
+    "t_other": {"other.yaml"},
+}
+
+
+def test_select_data_dep_picks_only_readers():
+    sel = select.select_tests(
+        {"t_tax": {}, "t_other": {}}, {}, set(), {"t_tax", "t_other"},
+        data_changes={"tax.json"}, reads=READS,
+    )
+    assert set(sel) == {"t_tax"}
+    assert sel["t_tax"] == "reads tax.json"
+
+
+def test_select_unread_data_file_runs_nothing():
+    sel = select.select_tests(
+        {"t_tax": {}, "t_other": {}}, {}, set(), {"t_tax", "t_other"},
+        data_changes={"nobody_reads_this.json"}, reads=READS,
+    )
+    assert sel == {}
