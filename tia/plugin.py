@@ -14,6 +14,14 @@ one test that actually reads it.
 import os
 import sys
 
+# coverage.py's sysmon core (the default on Python 3.12+) records only the
+# FIRST dynamic context to hit each line and silently drops every later
+# test that reuses the same code. For a shared helper that means only one
+# of its callers is mapped — a false negative, the one thing tia must not
+# do. The C tracer records all contexts correctly, so force it (unless the
+# user has deliberately chosen a core).
+os.environ.setdefault("COVERAGE_CORE", "ctrace")
+
 import coverage
 import pytest
 
@@ -85,17 +93,34 @@ class RecordPlugin:
             return
         self.reads.setdefault(nodeid, set()).add(rel)
 
+    def _enter(self, nodeid: str) -> None:
+        self.cov.switch_context(nodeid)
+        self._current = nodeid
+
+    def _leave(self) -> None:
+        self._current = None
+        self.cov.switch_context("")
+
+    # Attribute setup + call (+ teardown) to the test. Fixture-heavy suites
+    # (e.g. flask builds the app/client in fixtures) exercise most of their
+    # code during setup; attributing only the call phase under-records those
+    # tests, which then fall through to the always-run "new test" rule.
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_setup(self, item):
+        self._enter(item.nodeid)
+        return (yield)
+
     @pytest.hookimpl(wrapper=True)
     def pytest_runtest_call(self, item):
-        # Everything executed between these switches is attributed to
-        # this test's nodeid. Setup/teardown stay in the empty context.
-        self.cov.switch_context(item.nodeid)
-        self._current = item.nodeid
+        self._enter(item.nodeid)
+        return (yield)
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_runtest_teardown(self, item):
         try:
             return (yield)
         finally:
-            self._current = None
-            self.cov.switch_context("")
+            self._leave()
 
     def pytest_sessionfinish(self, session, exitstatus):
         self.cov.stop()

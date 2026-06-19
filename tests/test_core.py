@@ -1,5 +1,6 @@
 """Unit tests for tia's pure logic (no git / no pytest subprocess)."""
 
+import os
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -219,3 +220,38 @@ def test_server_rejects_path_traversal(tmp_path):
     assert server._resolve(str(tmp_path), "/maps/../secret") is None
     assert server._resolve(str(tmp_path), "/etc/passwd") is None
     assert server._resolve(str(tmp_path), "/maps/") is None
+
+
+# --- recorder: every test that hits a shared line must be mapped ----------
+
+def test_recorder_records_all_contexts_per_shared_line(tmp_path):
+    """Guards the sysmon-core bug: the default core on 3.12+ recorded only
+    the first test to hit a line, dropping every other caller of a shared
+    helper — a false negative. Importing tia.plugin forces COVERAGE_CORE
+    to a tracer that records all contexts.
+    """
+    import sys
+    import tia.plugin  # noqa: F401  (import sets COVERAGE_CORE=ctrace)
+    import coverage
+
+    assert os.environ.get("COVERAGE_CORE") != "sysmon"
+
+    (tmp_path / "shared_mod.py").write_text(
+        "def helper(x):\n    return x + 1\n", encoding="utf-8")
+    sys.path.insert(0, str(tmp_path))
+    try:
+        cov = coverage.Coverage(data_file=str(tmp_path / "c.db"),
+                                source=["shared_mod"], config_file=False)
+        cov.erase()
+        cov.start()
+        import shared_mod
+        cov.switch_context("t1"); shared_mod.helper(1)
+        cov.switch_context("t2"); shared_mod.helper(2)
+        cov.switch_context(""); cov.stop(); cov.save()
+        data = cov.get_data()
+        fp = next(iter(data.measured_files()))
+        ctxs = set(data.contexts_by_lineno(fp).get(2, []))  # the `return` line
+        assert {"t1", "t2"} <= ctxs, f"shared line dropped a caller: {ctxs}"
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("shared_mod", None)

@@ -103,10 +103,15 @@ where that blob may not be fetched. The diff itself still needs the base
 - **Coordinate sync.** The map is stamped with the ref it was recorded
   at and `run` diffs against it automatically. Re-run `tia record`
   after you commit so the map stays fresh.
-- **Read deps are call-phase only.** A file opened during fixture
-  setup/teardown (not the test body) isn't attributed to the test, the
-  same boundary coverage uses. Files read in a subprocess or another
-  thread can also be missed.
+- **Subprocess / other-thread execution isn't traced.** We attribute a
+  test's setup, call, and teardown (so fixture work and fixture file
+  reads count), but code that runs in a child process or a non-measured
+  thread is invisible to coverage and can hide a dependency.
+- **Needs coverage's C tracer.** On Python 3.12+ coverage defaults to the
+  `sysmon` core, which records only the *first* test to hit each line and
+  silently drops the rest — a false negative for any shared helper. tia
+  forces `COVERAGE_CORE=ctrace` during recording to get correct per-test
+  contexts; don't override it back to `sysmon`.
 - **Dynamic dispatch / reflection / subprocesses** aren't traced by
   coverage and can hide a real dependency. tia *detects* reflection and
   degrades to file-level there (see the dynamic-safety modifier), but a
@@ -122,6 +127,9 @@ where that blob may not be fetched. The diff itself still needs the base
   detect-and-degrade (mitigation, not a precise solution).
 - [x] **Industrialize** — zero-dep HTTP map store (`tia serve`) + GitHub
   Actions template, so adopting it is a few lines, not a project.
+- [x] **Real-repo benchmark** — measured on Flask; see
+  [`benchmark/RESULTS.md`](benchmark/RESULTS.md). It also caught a
+  recorder false-negative bug (the `sysmon` core dropping contexts).
 - [ ] **Real-repo benchmark** — skip-rate / miss-rate on OSS suites.
 
 ## Demo
