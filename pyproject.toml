@@ -1,6 +1,9 @@
 [project]
-name = "tia"
-version = "0.1.0"
+# Distribution name is pytest-tia (PyPI: `tia` is taken; the pytest- prefix
+# is the ecosystem convention). The command and import stay `tia`, like
+# pytest-cov installs but you type `--cov`.
+name = "pytest-tia"
+version = "1.0.0"
 description = "Test Impact Analysis for pytest — run only the tests your changes affect"
 requires-python = ">=3.10"
 dependencies = ["pytest>=7", "coverage>=7"]
