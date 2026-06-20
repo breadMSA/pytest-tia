@@ -1,0 +1,67 @@
+# Publish pytest-tia to PyPI via Trusted Publishing (OIDC — no stored token).
+#
+# Trigger: pushing a version tag like `v1.2.0`. The flow is:
+#   1. bump version in pyproject.toml AND tia/__init__.py
+#   2. commit
+#   3. git tag v1.2.0 && git push origin v1.2.0
+#   4. this workflow builds the dist and publishes it automatically
+#
+# PyPI versions are immutable, so the tag must be a NEW version every time.
+# A guard below refuses to publish if the tag doesn't match the packaged
+# version, so a typo'd tag can't push the wrong thing.
+#
+# ONE-TIME PyPI SETUP (see the chat / README): on pypi.org, project
+# pytest-tia -> Manage -> Publishing -> add a GitHub trusted publisher with
+#   owner:    breadMSA
+#   repo:     pytest-tia
+#   workflow: publish.yml
+#   environment: (leave blank — this workflow uses none)
+
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refuse to publish if tag != packaged version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "tag=$TAG packaged=$VER"
+          test "$TAG" = "$VER" || { echo "::error::tag v$TAG does not match pyproject version $VER"; exit 1; }
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Validate metadata
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # mint the short-lived OIDC token PyPI trusts
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
