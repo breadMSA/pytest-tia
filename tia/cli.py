@@ -7,7 +7,8 @@ import sys
 
 import pytest
 
-from tia import astmap, diff, dynscan, remotestore, resolve, select, semantic, server, store
+from tia import (astmap, diff, dynscan, remotestore, report, resolve, select,
+                 semantic, server, store)
 from tia.plugin import RecordPlugin
 
 
@@ -55,7 +56,12 @@ def _lines_to_quals(root: str, line_map: dict[str, dict[str, set[int]]]):
 
 
 def _cosmetic_files(changed: dict, ref: str, root: str) -> set[str]:
-    """.py files in the diff whose change is only comments/whitespace/docstrings."""
+    """.py files in the diff whose change is non-semantic.
+
+    Comments/whitespace/docstrings, plus the provably-dead type-only edits
+    (``if TYPE_CHECKING:`` bodies, function-local annotations). See
+    ``semantic.is_semantic_change``.
+    """
     out: set[str] = set()
     for path in changed:
         if not path.endswith(".py"):
@@ -127,9 +133,10 @@ def cmd_run(args) -> int:
     ref = args.since or tia_map.get("ref") or "HEAD"
 
     changed = diff.changed_lines(ref, cwd=root)
-    # 乙: drop .py files whose change is only comments/whitespace/docstrings,
-    # unless the user opts out. Best-effort — needs the old blob (skipped if
-    # unavailable, e.g. a shallow clone without the base fetched).
+    # 乙/戊: drop .py files whose change is non-semantic (comments, format,
+    # docstrings, or provably-dead type-only edits), unless the user opts
+    # out. Best-effort — needs the old blob (skipped if unavailable, e.g. a
+    # shallow clone without the base fetched).
     cosmetic: set[str] = set()
     if not args.all_changes:
         cosmetic = _cosmetic_files(changed, ref, root)
@@ -159,21 +166,11 @@ def cmd_run(args) -> int:
     print(f"[tia] ref {ref[:8] if ref else '?'} | changed files: {len(changed)} | "
           f"tests in suite: {total} | selected: {n}")
     for path in sorted(changed):
-        funcs = func_changes.get(path)
-        if path in escalated:
-            tag = f"{', '.join(sorted(funcs))} -> file-level (dynamic)"
-        elif funcs:
-            tag = ", ".join(sorted(funcs))
-        elif path in module_files:
-            tag = "module-level"
-        elif path in data_changes:
-            n_readers = sum(1 for f in reads.values() if path in f)
-            tag = f"data dep ({n_readers} reader{'' if n_readers == 1 else 's'})"
-        else:
-            tag = "no covered funcs"
+        tag = report.impact_tag(path, func_changes, module_files, escalated,
+                                data_changes, reads)
         print(f"       ~ {path}: {tag}")
     for path in sorted(cosmetic):
-        print(f"       ~ {path}: comments/docstring/format only - ignored")
+        print(f"       ~ {path}: comments/docstring/format/type-only - ignored")
     for nodeid, reason in sorted(selected.items()):
         print(f"       -> {nodeid}   ({reason})")
 
@@ -182,6 +179,32 @@ def cmd_run(args) -> int:
               f"widened to file-level - coverage can't trace these edges. "
               f"Run the full suite periodically as a safety net.",
               file=sys.stderr)
+
+    # Explainability in CI: drop a Markdown summary onto the PR check page.
+    # Auto-on when GitHub hands us $GITHUB_STEP_SUMMARY; --report forces it.
+    dest = args.report or os.environ.get("GITHUB_STEP_SUMMARY")
+    if dest:
+        md = report.render_markdown(
+            ref, list(changed), func_changes, module_files, escalated,
+            data_changes, reads, cosmetic, selected, total)
+        if dest == "-":
+            # The report is UTF-8 (it has emoji). Write raw bytes through the
+            # buffer so a legacy-codepage console (e.g. Windows cp950) can't
+            # raise UnicodeEncodeError mid-run; fall back if there's no buffer
+            # (e.g. stdout was replaced under capture).
+            buf = getattr(sys.stdout, "buffer", None)
+            if buf is not None:
+                sys.stdout.flush()
+                buf.write(md.encode("utf-8"))
+                buf.flush()
+            else:
+                sys.stdout.write(md)
+        else:
+            try:
+                with open(dest, "a", encoding="utf-8") as fh:
+                    fh.write(md)
+            except OSError as e:
+                print(f"[tia] could not write report to {dest}: {e}", file=sys.stderr)
 
     if not selected:
         saved = "100%" if total else "n/a"
@@ -257,7 +280,10 @@ def main(argv=None) -> int:
     run.add_argument("--trust-dynamic", action="store_true",
                      help="don't widen reflection-heavy files to file-level (less safe)")
     run.add_argument("--all-changes", action="store_true",
-                     help="don't ignore comment/docstring/format-only edits")
+                     help="don't ignore comment/docstring/format/type-only edits")
+    run.add_argument("--report", metavar="PATH",
+                     help="write a Markdown summary to PATH ('-' for stdout); "
+                          "auto-enabled from $GITHUB_STEP_SUMMARY in CI")
     run.set_defaults(func=cmd_run)
 
     push = sub.add_parser("push", help="publish the local map to a shared remote (for CI)")

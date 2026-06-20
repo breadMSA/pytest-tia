@@ -4,7 +4,7 @@ import os
 import threading
 from http.server import ThreadingHTTPServer
 
-from tia import astmap, dynscan, remotestore, resolve, select, semantic, server
+from tia import astmap, dynscan, remotestore, report, resolve, select, semantic, server
 
 SOURCE = '''\
 import os
@@ -144,6 +144,124 @@ def test_remote_pull_falls_back_to_latest(tmp_path):
     assert dest.read_text(encoding="utf-8") == '{"ref":"abc123"}'
 
 
+# --- S3 / GCS backends (v1.1), driven by in-memory fakes -----------------
+# No real SDK or credentials: we monkeypatch the client factories so the
+# tests exercise URL parsing, key layout, and the latest-fallback logic.
+
+class _NoSuchKey(Exception):
+    pass
+
+
+class _FakeS3:
+    class exceptions:
+        NoSuchKey = _NoSuchKey
+
+    def __init__(self):
+        self.store: dict[tuple[str, str], bytes] = {}
+
+    def put_object(self, Bucket, Key, Body):
+        self.store[(Bucket, Key)] = Body
+
+    def get_object(self, Bucket, Key):
+        if (Bucket, Key) not in self.store:
+            raise self.exceptions.NoSuchKey()
+        import io
+        return {"Body": io.BytesIO(self.store[(Bucket, Key)])}
+
+
+def test_s3_push_pull_roundtrip_and_layout(tmp_path, monkeypatch):
+    fake = _FakeS3()
+    monkeypatch.setattr(remotestore, "_s3_client", lambda: fake)
+    local = tmp_path / "map.json"
+    local.write_text('{"ref":"abc123"}', encoding="utf-8")
+
+    loc = remotestore.push(str(local), "s3://my-bucket/ci/tia-maps", "abc123")
+    assert loc == "s3://my-bucket/ci/tia-maps/maps/abc123.json"
+    assert ("my-bucket", "ci/tia-maps/maps/abc123.json") in fake.store
+    assert ("my-bucket", "ci/tia-maps/maps/latest.json") in fake.store
+
+    dest = tmp_path / "out.json"
+    got = remotestore.pull("s3://my-bucket/ci/tia-maps", "abc123", str(dest))
+    assert got == "s3://my-bucket/ci/tia-maps/maps/abc123.json"
+    assert dest.read_text(encoding="utf-8") == '{"ref":"abc123"}'
+
+
+def test_s3_unknown_ref_falls_back_to_latest(tmp_path, monkeypatch):
+    fake = _FakeS3()
+    monkeypatch.setattr(remotestore, "_s3_client", lambda: fake)
+    local = tmp_path / "map.json"
+    local.write_text('{"ref":"abc123"}', encoding="utf-8")
+    remotestore.push(str(local), "s3://b/p", "abc123")
+
+    got = remotestore.pull("s3://b/p", "nobody-recorded", str(tmp_path / "o.json"))
+    assert got == "s3://b/p/maps/latest.json"
+
+
+def test_s3_missing_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(remotestore, "_s3_client", lambda: _FakeS3())
+    dest = tmp_path / "out.json"
+    assert remotestore.pull("s3://empty/x", "whatever", str(dest)) is None
+    assert not dest.exists()
+
+
+class _GcsNotFound(Exception):
+    pass
+
+
+class _FakeBlob:
+    def __init__(self, store, key):
+        self._store, self._key = store, key
+
+    def upload_from_string(self, data):
+        self._store[self._key] = data
+
+    def download_as_bytes(self):
+        if self._key not in self._store:
+            raise _GcsNotFound()
+        return self._store[self._key]
+
+
+class _FakeGcsBucket:
+    def __init__(self, store):
+        self._store = store
+
+    def blob(self, key):
+        return _FakeBlob(self._store, key)
+
+
+class _FakeGcs:
+    def __init__(self):
+        self.store: dict[str, bytes] = {}
+
+    def bucket(self, name):
+        return _FakeGcsBucket(self.store)
+
+
+def test_gcs_push_pull_roundtrip_and_fallback(tmp_path, monkeypatch):
+    fake = _FakeGcs()
+    monkeypatch.setattr(remotestore, "_gcs_client", lambda: fake)
+    monkeypatch.setattr(remotestore, "_gcs_not_found", lambda: _GcsNotFound)
+    local = tmp_path / "map.json"
+    local.write_text('{"ref":"deadbeef"}', encoding="utf-8")
+
+    loc = remotestore.push(str(local), "gs://bkt/tia", "deadbeef")
+    assert loc == "gs://bkt/tia/maps/deadbeef.json"
+    assert "tia/maps/deadbeef.json" in fake.store
+
+    dest = tmp_path / "out.json"
+    assert remotestore.pull("gs://bkt/tia", "deadbeef", str(dest)) is not None
+    assert dest.read_text(encoding="utf-8") == '{"ref":"deadbeef"}'
+
+    got = remotestore.pull("gs://bkt/tia", "unknown", str(tmp_path / "o2.json"))
+    assert got == "gs://bkt/tia/maps/latest.json"
+
+
+def test_gcs_missing_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(remotestore, "_gcs_client", lambda: _FakeGcs())
+    monkeypatch.setattr(remotestore, "_gcs_not_found", lambda: _GcsNotFound)
+    assert remotestore.pull("gs://b/p", "x", str(tmp_path / "o.json")) is None
+
+
 # --- ④ dynamic-dispatch scan + escalation --------------------------------
 
 def test_dynscan_flags_getattr_by_computed_name():
@@ -258,6 +376,124 @@ def test_semantic_uncommenting_is_semantic_not_cosmetic():
 
 def test_semantic_unparseable_is_conservative():
     assert semantic.is_semantic_change("def f(:\n", "def f():\n    pass\n") is True
+
+
+# --- 戊 type-only change detection (v1.1) ---------------------------------
+# Strip only the provably-dead type constructs. The trap: annotations are
+# NOT universally inert — dataclasses/pydantic read __annotations__. The
+# "kept" tests below guard against a false negative on those.
+
+def test_type_only_type_checking_import_is_cosmetic():
+    old = ("from typing import TYPE_CHECKING\n"
+           "if TYPE_CHECKING:\n    from a import B\n"
+           "def f(x):\n    return x\n")
+    new = ("from typing import TYPE_CHECKING\n"
+           "if TYPE_CHECKING:\n    from a import B\n    from c import D\n"
+           "def f(x):\n    return x\n")
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_type_only_qualified_type_checking_is_cosmetic():
+    old = "import typing\nif typing.TYPE_CHECKING:\n    x = 1\ny = 2\n"
+    new = "import typing\nif typing.TYPE_CHECKING:\n    x = 99\ny = 2\n"
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_type_only_local_annotation_change_is_cosmetic():
+    old = "def f():\n    x: int = 5\n    return x\n"
+    new = "def f():\n    x: str = 5\n    return x\n"
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_type_only_bare_local_annotation_add_is_cosmetic():
+    old = "def f(items):\n    return items\n"
+    new = "def f(items):\n    seen: list\n    return items\n"
+    assert semantic.is_semantic_change(old, new) is False
+
+
+def test_type_only_local_value_change_is_still_semantic():
+    # The annotation is inert, but the assigned value is not.
+    old = "def f():\n    x: int = 5\n    return x\n"
+    new = "def f():\n    x: int = 6\n    return x\n"
+    assert semantic.is_semantic_change(old, new) is True
+
+
+def test_type_only_dataclass_field_change_is_KEPT_semantic():
+    # The honesty guard: a dataclass field annotation feeds __annotations__,
+    # so changing it changes runtime behaviour. Must NOT be filtered out.
+    old = ("from dataclasses import dataclass\n@dataclass\n"
+           "class C:\n    x: int\n")
+    new = ("from dataclasses import dataclass\n@dataclass\n"
+           "class C:\n    x: str\n")
+    assert semantic.is_semantic_change(old, new) is True
+
+
+def test_type_only_signature_annotation_change_is_KEPT_semantic():
+    # Argument/return annotations land in __annotations__ (pydantic/typer
+    # read them), so we deliberately do not strip them.
+    old = "def f(x: int) -> int:\n    return x\n"
+    new = "def f(x: str) -> str:\n    return x\n"
+    assert semantic.is_semantic_change(old, new) is True
+
+
+def test_type_only_not_type_checking_branch_is_kept_semantic():
+    # `if not TYPE_CHECKING:` runs at runtime — must not be stripped.
+    old = "if not TYPE_CHECKING:\n    x = 1\n"
+    new = "if not TYPE_CHECKING:\n    x = 2\n"
+    assert semantic.is_semantic_change(old, new) is True
+
+
+def test_type_only_type_checking_else_branch_is_kept_semantic():
+    # The else of `if TYPE_CHECKING:` is the live branch.
+    old = "if TYPE_CHECKING:\n    x = 1\nelse:\n    x = 2\n"
+    new = "if TYPE_CHECKING:\n    x = 1\nelse:\n    x = 3\n"
+    assert semantic.is_semantic_change(old, new) is True
+
+
+# --- GitHub Step Summary report (v1.1) -----------------------------------
+
+def test_impact_tag_matches_each_selection_reason():
+    fc = {"a.py": {"f", "g"}}
+    assert report.impact_tag("a.py", fc, set(), {}, set(), {}) == "f, g"
+    assert report.impact_tag("a.py", fc, set(), {"a.py": ["getattr() @L1"]},
+                             set(), {}) == "f, g -> file-level (dynamic)"
+    assert report.impact_tag("b.py", {}, {"b.py"}, {}, set(), {}) == "module-level"
+    assert report.impact_tag("d.json", {}, set(), {}, {"d.json"},
+                             {"t": {"d.json"}}) == "data dep (1 reader)"
+    assert report.impact_tag("z.py", {}, set(), {}, set(), {}) == "no covered funcs"
+
+
+def test_render_markdown_has_headline_and_tables():
+    md = report.render_markdown(
+        ref="a1b2c3d4ffff", changed=["src/app.py"],
+        func_changes={"src/app.py": {"handle"}}, module_files=set(),
+        escalated={}, data_changes=set(), reads={},
+        cosmetic={"util.py"},
+        selected={"tests/test_app.py::test_handle": "src/app.py: handle"},
+        total=10)
+    assert "Selected 1 / 10 tests — 90% skipped" in md
+    assert "a1b2c3d4" in md and "ffff" not in md  # ref shortened
+    assert "| `src/app.py` | handle |" in md
+    assert "util.py" in md  # ignored section
+    assert "tests/test_app.py::test_handle" in md
+
+
+def test_render_markdown_empty_selection():
+    md = report.render_markdown(
+        ref="deadbeef", changed=[], func_changes={}, module_files=set(),
+        escalated={}, data_changes=set(), reads={}, cosmetic=set(),
+        selected={}, total=42)
+    assert "No affected tests — skipping all 42 tests (100% saved)." in md
+
+
+def test_render_markdown_escapes_pipes_in_cells():
+    md = report.render_markdown(
+        ref="x", changed=[], func_changes={}, module_files=set(),
+        escalated={}, data_changes=set(), reads={},
+        cosmetic=set(),
+        selected={"t::test[a|b]": "reason"}, total=1)
+    assert "test\\[" not in md  # only pipes are escaped, not brackets
+    assert r"test[a\|b]" in md
 
 
 # --- recorder: every test that hits a shared line must be mapped ----------

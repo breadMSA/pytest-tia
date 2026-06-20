@@ -3,10 +3,16 @@
 # is the ecosystem convention). The command and import stay `tia`, like
 # pytest-cov installs but you type `--cov`.
 name = "pytest-tia"
-version = "1.0.0"
+version = "1.1.0"
 description = "Test Impact Analysis for pytest — run only the tests your changes affect"
 requires-python = ">=3.10"
 dependencies = ["pytest>=7", "coverage>=7"]
+
+[project.optional-dependencies]
+# Only needed if you point a remote at an s3:// or gs:// URL. The core
+# install stays dependency-light; these are imported lazily on demand.
+s3 = ["boto3>=1.26"]
+gcs = ["google-cloud-storage>=2.0"]
 
 [project.scripts]
 tia = "tia.cli:main"

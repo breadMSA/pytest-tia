@@ -3,8 +3,15 @@
 # pull it and run only the affected tests.
 #
 # This template uses a cached directory as the "remote". For a team-wide
-# store instead, run `tia serve` somewhere and point --to/--remote at its
-# URL (e.g. http://tia.internal:8000) — same commands, no cache step.
+# store instead, point --to/--remote at a `tia serve` URL (e.g.
+# http://tia.internal:8000) or a bucket — `s3://my-ci/tia-maps`
+# (needs `pip install pytest-tia[s3]`) or `gs://...` (`[gcs]`). Same
+# commands, no cache step.
+#
+# The `tia run` step below auto-detects $GITHUB_STEP_SUMMARY (GitHub sets
+# it) and posts a Markdown impact table to the PR's check page — which
+# files changed, their impact, and which tests were selected and why.
+# Nothing to configure.
 
 name: tia
 

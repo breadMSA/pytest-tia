@@ -79,6 +79,18 @@ counts as real. So a "fix typo" / "add docstring" / "run black" commit on
 a core file selects *nothing* instead of half the suite. `--all-changes`
 opts out. Safe by construction: it only removes false positives.
 
+The same filter also drops **type-only** edits — but only the kind that
+is *provably* dead at runtime, because the common belief that "type hints
+don't run" is false: `dataclasses`, `pydantic` and `attrs` all read
+`__annotations__`. So it strips exactly two things: the body of an
+`if TYPE_CHECKING:` block (never executed at runtime — where most hint
+churn lives) and **function-local** annotations (PEP 526: never evaluated
+nor stored). It deliberately *keeps* a change to a function signature or a
+class/module-level annotation as real, because a dataclass field's type
+genuinely changes behavior. Stripping those would be a false negative —
+the one sin this tool won't commit. So "added the type hints" stops
+triggering tests, without ever hiding a `dataclass` field-type change.
+
 ## Usage
 
 ```sh
@@ -88,12 +100,19 @@ tia record [PATH]          # build the map (run from the repo root)
 tia run [PATH]             # run only affected tests
 tia run --since main       # diff against another ref
 tia run --list             # show the selection, don't run
+tia run --report -         # also print a Markdown summary (see CI mode)
 tia status                 # summarize the recorded map
 
 tia serve --dir ./maps     # run the bundled map store (zero deps)
 tia push --to  <dir|url>   # publish the local map (for CI)
 tia pull --from <dir|url>  # fetch a published map
 ```
+
+Remotes for `push`/`pull`/`--remote` can be a directory, an `http(s)://`
+URL (the bundled store), or native object storage: `s3://bucket/prefix`
+(`pip install pytest-tia[s3]`) or `gs://bucket/prefix`
+(`pytest-tia[gcs]`). The cloud SDKs are imported lazily, so the core
+install stays dependency-light unless you actually use those URLs.
 
 Run from the repository root (where `pyproject.toml` / `.git` live) so
 nodeids and file paths stay consistent.
@@ -102,19 +121,27 @@ nodeids and file paths stay consistent.
 
 The map a base-branch job builds has to reach the PR job that consumes
 it. Publish it to a shared remote keyed by the git ref it was recorded
-at. The remote is either a **directory** (a cache volume / artifact dir
-synced to S3) or an **`http(s)://` URL** served by the bundled store:
+at. The remote can be a **directory** (a cache volume / artifact dir), an
+**`http(s)://` URL** served by the bundled store, or a native
+**`s3://` / `gs://`** bucket:
 
 ```sh
 # one zero-dependency map store for the team / CI (stdlib only)
 python -m tia.server --dir ./tia-maps --port 8000     # or: tia serve ...
 
 # base branch job
-tia record && tia push --to http://tia.internal:8000
+tia record && tia push --to s3://my-company-ci/tia-maps
 
 # PR job — no local map needed; pulls by base ref, falls back to latest
-tia run --remote http://tia.internal:8000 --since "$(git merge-base origin/main HEAD)"
+tia run --remote s3://my-company-ci/tia-maps --since "$(git merge-base origin/main HEAD)"
 ```
+
+In a GitHub Actions PR job, `tia run` auto-detects `$GITHUB_STEP_SUMMARY`
+and posts a Markdown table to the check page — which files changed, the
+impact of each, and exactly which tests were selected and why. No flag
+needed; it's the same explanation as the terminal output, rendered for
+the PR. (`--report <path>`, or `--report -` for stdout, forces it
+anywhere.)
 
 A ready-to-copy GitHub Actions workflow is in
 [`examples/ci/github-actions.yml`](examples/ci/github-actions.yml).
@@ -163,6 +190,17 @@ where that blob may not be fetched. The diff itself still needs the base
   recorder false-negative bug (the `sysmon` core dropping contexts).
 - [x] **Cosmetic-change filter** — ignore comment/docstring/format-only
   edits so they select nothing instead of a whole file.
+- [x] **Type-only filter (v1.1)** — also ignore `if TYPE_CHECKING:` and
+  function-local annotation edits; keep signature/dataclass-field type
+  changes (provably-safe subset only — no false negatives).
+- [x] **Native S3 / GCS remotes (v1.1)** — `s3://` / `gs://` map stores
+  via lazily-imported SDKs; core install stays dependency-light.
+- [x] **CI step summary (v1.1)** — auto-post a Markdown impact table to
+  the PR via `$GITHUB_STEP_SUMMARY`.
+- [ ] **Not planned: precise cross-file dynamic dispatch.** Resolving a
+  `getattr`/`eval` target across files is undecidable in general; the
+  detect-and-degrade modifier plus periodic full runs is the honest
+  answer, not a static call graph that drowns in edge cases.
 
 ## Demo
 
