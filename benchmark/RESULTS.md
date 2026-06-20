@@ -1,7 +1,13 @@
-# Benchmark: tia on Flask
+# Benchmark: tia on Flask (the worst case)
 
 A real third-party suite, not a toy. Target: [pallets/flask](https://github.com/pallets/flask)
 `main` (HEAD `36e4a82`), 483 tests, pytest 8, Python 3.14.
+
+> This is the **floor**: Flask is small and tightly-coupled, near the
+> worst case for test selection. For the other end of the honest range —
+> a modular library where tia skips a ~96% median on real logic changes —
+> see [`RESULTS-boltons.md`](RESULTS-boltons.md). The point of publishing
+> both is that TIA's payoff is a *range* set by how modular your code is.
 
 Reproduce:
 

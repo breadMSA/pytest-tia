@@ -24,10 +24,17 @@ high number was false negatives wearing a costume. We forced the C tracer
 truth: **median ~21% skip on Flask** (≈40% mean; cosmetic commits 99%+).
 The toy demo could never have shown this — only a real codebase did.
 
-So the numbers below are deliberately the *lower bound*: Flask is small
-and tightly coupled, near the worst case for test selection. We'd rather
-publish the honest floor than a cherry-picked ceiling. Full story and
-the per-commit table: [`benchmark/RESULTS.md`](benchmark/RESULTS.md).
+So the Flask number is deliberately the *lower bound*: Flask is small and
+tightly coupled, near the worst case for test selection. We'd rather
+publish the honest floor than a cherry-picked ceiling. But a floor alone
+is misleading too, so we measured the other end: on
+[boltons](benchmark/RESULTS-boltons.md), a modular utility library, the
+honest median skip on real logic changes is **~96%**. Same tool, same
+rules — the variable is how decoupled your tests are. The truth is a
+**range, ~21% (worst case) ↔ ~96% (modular)**, and both ends are measured
+on real third-party suites, not toys. Per-commit tables and the "I
+distrusted this number first" audits:
+[Flask](benchmark/RESULTS.md) · [boltons](benchmark/RESULTS-boltons.md).
 
 ## How it works
 
@@ -185,9 +192,11 @@ where that blob may not be fetched. The diff itself still needs the base
   detect-and-degrade (mitigation, not a precise solution).
 - [x] **Industrialize** — zero-dep HTTP map store (`tia serve`) + GitHub
   Actions template, so adopting it is a few lines, not a project.
-- [x] **Real-repo benchmark** — measured on Flask; see
-  [`benchmark/RESULTS.md`](benchmark/RESULTS.md). It also caught a
-  recorder false-negative bug (the `sysmon` core dropping contexts).
+- [x] **Real-repo benchmark, both ends of the range** — Flask (worst
+  case, ~21%, [`RESULTS.md`](benchmark/RESULTS.md)) and boltons (modular,
+  ~96% on logic changes, [`RESULTS-boltons.md`](benchmark/RESULTS-boltons.md)).
+  The Flask run also caught a recorder false-negative bug (the `sysmon`
+  core dropping contexts).
 - [x] **Cosmetic-change filter** — ignore comment/docstring/format-only
   edits so they select nothing instead of a whole file.
 - [x] **Type-only filter (v1.1)** — also ignore `if TYPE_CHECKING:` and
