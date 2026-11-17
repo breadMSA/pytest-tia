@@ -124,6 +124,11 @@ install stays dependency-light unless you actually use those URLs.
 Run from the repository root (where `pyproject.toml` / `.git` live) so
 nodeids and file paths stay consistent.
 
+**pytest-xdist:** `tia record` always runs in a single process (it passes
+`-n 0`, overriding an `addopts = -n auto`), because the recorder can't see
+tests that run in xdist workers. `tia run` is unaffected and still runs the
+selected tests in parallel.
+
 ### CI mode
 
 The map a base-branch job builds has to reach the PR job that consumes

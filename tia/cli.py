@@ -86,7 +86,7 @@ def cmd_record(args) -> int:
     os.makedirs(store.tia_dir(root), exist_ok=True)
 
     plugin = RecordPlugin(root, data_file, source)
-    pytest_args = ["-q", "-p", "no:cacheprovider"]
+    pytest_args = ["-q", "-p", "no:cacheprovider"] + _serial_args()
     if args.path:
         pytest_args.insert(0, args.path)
     code = pytest.main(pytest_args, plugins=[plugin])
@@ -98,7 +98,27 @@ def cmd_record(args) -> int:
     n_reads = sum(len(v) for v in plugin.reads.values())
     print(f"\n[tia] recorded {len(quals)} tests "
           f"({n_reads} non-py read deps, {len(dynamic)} dynamic files) -> {path}")
+    if not quals and code == 0:
+        # Tests ran but none were attributed: the recorder never saw them
+        # (e.g. another plugin ran them out-of-process). Every test would
+        # then be "new" and always run — safe, but tia would do nothing.
+        print("[tia] WARNING: tests ran but none were recorded. Is a plugin "
+              "running them in subprocesses? tia record must run in-process.",
+              file=sys.stderr)
     return int(code) if code not in (0, 5) else 0
+
+
+def _serial_args() -> list[str]:
+    """Force recording in-process when pytest-xdist is installed.
+
+    xdist runs tests in worker processes, where the recorder's coverage
+    contexts never fire, so ``addopts = -n auto`` silently yields an empty
+    map. A trailing ``-n 0`` overrides addopts. (Only ``tia record`` needs
+    this; ``tia run`` can still use xdist.) We can't use ``-p no:xdist``:
+    an ``-n`` left in addopts would then be an unknown option.
+    """
+    import importlib.util
+    return ["-n", "0"] if importlib.util.find_spec("xdist") else []
 
 
 def _scan_dynamic(root: str, funcmaps: dict[str, dict[int, str]]) -> dict[str, list[str]]:
