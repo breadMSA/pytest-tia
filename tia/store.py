@@ -15,6 +15,10 @@ clones where the recorded blob may not be fetched.
 v5 adds ``dynamic``: per-file reflection markers found at record time, so
 ``run`` can degrade to file-level selection where coverage edges can't be
 trusted.
+
+v5 maps may also carry ``durations``: seconds each test took while recording
+(setup + call + teardown, under coverage). Optional and additive, so older
+readers ignore it and older maps load with an empty table.
 """
 
 import datetime
@@ -40,6 +44,7 @@ def save_map(
     reads: dict[str, set[str]] | None = None,
     funcmaps: dict[str, dict[int, str]] | None = None,
     dynamic: dict[str, list[str]] | None = None,
+    durations: dict[str, float] | None = None,
 ) -> str:
     os.makedirs(tia_dir(root), exist_ok=True)
     reads = reads or {}
@@ -62,6 +67,9 @@ def save_map(
             for path, l2q in sorted(funcmaps.items())
         },
         "dynamic": {path: markers for path, markers in sorted(dynamic.items())},
+        "durations": {
+            nodeid: round(secs, 3) for nodeid, secs in sorted((durations or {}).items())
+        },
     }
     path = map_path(root)
     with open(path, "w", encoding="utf-8") as fh:
@@ -82,4 +90,5 @@ def load_map(root: str) -> dict:
         for path, l2q in data.get("funcmaps", {}).items()
     }
     data["dynamic"] = data.get("dynamic", {})
+    data["durations"] = data.get("durations", {})
     return data

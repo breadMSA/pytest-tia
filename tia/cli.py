@@ -66,7 +66,7 @@ def _cosmetic_files(changed: dict, ref: str, root: str) -> set[str]:
     for path in changed:
         if not path.endswith(".py"):
             continue
-        old = resolve._git_show(ref, path, root)
+        old = resolve.git_show(ref, path, root)
         if old is None:
             continue  # new/unavailable at ref — let normal selection handle it
         try:
@@ -86,7 +86,7 @@ def cmd_record(args) -> int:
     os.makedirs(store.tia_dir(root), exist_ok=True)
 
     plugin = RecordPlugin(root, data_file, source)
-    pytest_args = ["-q", "-p", "no:cacheprovider"] + _serial_args()
+    pytest_args = ["-q", "-p", "no:cacheprovider"] + _xdist_args()
     if args.path:
         pytest_args.insert(0, args.path)
     code = pytest.main(pytest_args, plugins=[plugin])
@@ -94,31 +94,33 @@ def cmd_record(args) -> int:
     quals, funcmaps = _lines_to_quals(root, plugin.result)
     dynamic = _scan_dynamic(root, funcmaps)
     path = store.save_map(root, quals, ref=_head_sha(root),
-                          reads=plugin.reads, funcmaps=funcmaps, dynamic=dynamic)
+                          reads=plugin.reads, funcmaps=funcmaps, dynamic=dynamic,
+                          durations=plugin.durations)
     n_reads = sum(len(v) for v in plugin.reads.values())
+    where = f", {plugin.workers} xdist workers" if plugin.workers else ""
     print(f"\n[tia] recorded {len(quals)} tests "
-          f"({n_reads} non-py read deps, {len(dynamic)} dynamic files) -> {path}")
+          f"({n_reads} non-py read deps, {len(dynamic)} dynamic files{where}) -> {path}")
     if not quals and code == 0:
         # Tests ran but none were attributed: the recorder never saw them
         # (e.g. another plugin ran them out-of-process). Every test would
         # then be "new" and always run — safe, but tia would do nothing.
         print("[tia] WARNING: tests ran but none were recorded. Is a plugin "
-              "running them in subprocesses? tia record must run in-process.",
+              "running them in subprocesses?",
               file=sys.stderr)
     return int(code) if code not in (0, 5) else 0
 
 
-def _serial_args() -> list[str]:
-    """Force recording in-process when pytest-xdist is installed.
+def _xdist_args() -> list[str]:
+    """Let xdist workers record too, when pytest-xdist is installed.
 
-    xdist runs tests in worker processes, where the recorder's coverage
-    contexts never fire, so ``addopts = -n auto`` silently yields an empty
-    map. A trailing ``-n 0`` overrides addopts. (Only ``tia record`` needs
-    this; ``tia run`` can still use xdist.) We can't use ``-p no:xdist``:
-    an ``-n`` left in addopts would then be an unknown option.
+    The ``RecordPlugin`` object handed to ``pytest.main`` lives only in this
+    process. xdist workers rebuild their config from the invocation args, so
+    ``-p tia._xdist`` makes each worker load the module whose
+    ``pytest_configure`` starts a recorder there. Parallel recording then
+    follows the suite's own ``-n``/``--dist`` settings (e.g. addopts).
     """
     import importlib.util
-    return ["-n", "0"] if importlib.util.find_spec("xdist") else []
+    return ["-p", "tia._xdist"] if importlib.util.find_spec("xdist") else []
 
 
 def _scan_dynamic(root: str, funcmaps: dict[str, dict[int, str]]) -> dict[str, list[str]]:
@@ -231,8 +233,10 @@ def cmd_run(args) -> int:
         print(f"[tia] no affected tests - skipping {total} tests ({saved} saved).")
         return 0
     if total:
+        est = select.recorded_seconds(tia_map.get("durations", {}), selected)
+        est = f", ~{est:.1f}s recorded" if est is not None else ""
         print(f"[tia] running {n}/{total} tests "
-              f"({100 * (total - n) // total}% skipped).")
+              f"({100 * (total - n) // total}% skipped{est}).")
 
     if args.list:
         return 0

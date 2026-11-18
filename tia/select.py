@@ -74,3 +74,17 @@ def escalate_dynamic(
             module_files.add(path)
             escalated[path] = dynamic[path]
     return module_files, escalated
+
+
+def recorded_seconds(durations: dict[str, float], nodeids) -> float | None:
+    """Total recorded time of ``nodeids``; None if any of them is unmeasured.
+
+    Recording runs under coverage, so this over-estimates a plain run; it is
+    meant for relative decisions (e.g. whether xdist startup is worth it).
+    """
+    total = 0.0
+    for nodeid in nodeids:
+        if nodeid not in durations:
+            return None
+        total += durations[nodeid]
+    return total
