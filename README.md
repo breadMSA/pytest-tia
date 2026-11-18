@@ -124,10 +124,38 @@ install stays dependency-light unless you actually use those URLs.
 Run from the repository root (where `pyproject.toml` / `.git` live) so
 nodeids and file paths stay consistent.
 
-**pytest-xdist:** `tia record` always runs in a single process (it passes
-`-n 0`, overriding an `addopts = -n auto`), because the recorder can't see
-tests that run in xdist workers. `tia run` is unaffected and still runs the
-selected tests in parallel.
+**pytest-xdist:** `tia record` records in parallel under your suite's own
+`-n` / `--dist` settings (including `addopts = -n auto` and `--dist
+loadgroup`). Each worker records its own coverage, and the controller
+combines them into one map that matches a single-process recording.
+`loadgroup`'s `@group` suffix is stripped from node ids. Tests on a worker
+that crashes stay unmapped, so `tia run` always runs them. To record in a
+single process anyway, pass `-n 0` in `PYTEST_ADDOPTS`.
+
+The map also stores each test's recorded duration (setup + call +
+teardown, under coverage), and `tia run` prints the recorded time of the
+selection.
+
+### Python API
+
+Tools that build their own recorder or selector on top of tia can rely on
+these functions. Their signatures are covered by `tests/test_public_api.py`
+and change only in a major release:
+
+| Function | Purpose |
+|---|---|
+| `tia.astmap.line_to_qualname(source)` / `line_to_qualname_from_file(path)` | line number -> enclosing qualname |
+| `tia.dynscan.find_markers(source)` | reflection markers that make a file "dynamic" |
+| `tia.diff.changed_lines(ref, cwd)` | changed old-side lines per file |
+| `tia.resolve.git_show(ref, path, cwd)` | file source at a ref (the old `_git_show` still works) |
+| `tia.resolve.changed_functions(changes, ref, cwd, funcmaps)` | changed lines -> changed qualnames |
+| `tia.semantic.is_semantic_change(old_src, new_src)` | False for comment/format/docstring/type-only edits |
+| `tia.select.select_tests(...)` / `escalate_dynamic(...)` / `recorded_seconds(...)` | selection |
+
+The map format (`.tia/map.json`, `"version": 5`) has these keys: `ref`,
+`tests`, `reads`, `funcmaps`, `dynamic`, plus the optional `durations`.
+New keys are added only as optional fields. Removing or changing a key
+bumps the version.
 
 ### CI mode
 

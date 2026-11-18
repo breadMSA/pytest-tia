@@ -23,7 +23,8 @@ import subprocess
 from tia import astmap
 
 
-def _git_show(ref: str, path: str, cwd: str) -> str | None:
+def git_show(ref: str, path: str, cwd: str) -> str | None:
+    """The file's source at ``ref``, or None if it doesn't exist there."""
     out = subprocess.run(
         ["git", "show", f"{ref}:{path}"],
         cwd=cwd,
@@ -33,6 +34,10 @@ def _git_show(ref: str, path: str, cwd: str) -> str | None:
         errors="replace",
     )
     return out.stdout if out.returncode == 0 else None
+
+
+# Pre-1.2 name, kept so callers that imported it keep working.
+_git_show = git_show
 
 
 def changed_functions(
@@ -52,7 +57,7 @@ def changed_functions(
         l2q = funcmaps.get(path)
         if l2q is None:
             # Not in the baked map — fall back to reading the blob at the ref.
-            src = _git_show(ref, path, cwd)
+            src = git_show(ref, path, cwd)
             if src is None:
                 continue  # new at this ref, or not fetched — new tests run anyway
             try:
