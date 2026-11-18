@@ -16,7 +16,9 @@ the honest safety net, not a precise solution.
 import ast
 
 # Builtins whose target/effect isn't statically knowable.
-_DYNAMIC_BUILTINS = {"eval", "exec", "__import__"}
+# ``globals()``/``locals()`` expose the namespace for arbitrary runtime
+# name lookup or mutation, so coverage can't trust the edges either.
+_DYNAMIC_BUILTINS = {"eval", "exec", "__import__", "globals", "locals"}
 # Attribute access by name; safe only when the name is a literal.
 _DYNAMIC_ATTR = {"getattr", "setattr", "delattr"}
 # Dynamic-attribute hooks: defining one makes a class's attributes runtime.
