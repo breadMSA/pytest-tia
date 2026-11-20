@@ -230,6 +230,9 @@ where that blob may not be fetched. The diff itself still needs the base
   ~96% on logic changes, [`RESULTS-boltons.md`](benchmark/RESULTS-boltons.md)).
   The Flask run also caught a recorder false-negative bug (the `sysmon`
   core dropping contexts).
+- [x] **Method- vs file-level, measured** — method-level runs 26% fewer
+  tests on Flask (big central files) and 7% fewer on boltons (modular),
+  [`RESULTS-granularity.md`](benchmark/RESULTS-granularity.md).
 - [x] **Cosmetic-change filter** — ignore comment/docstring/format-only
   edits so they select nothing instead of a whole file.
 - [x] **Type-only filter (v1.1)** — also ignore `if TYPE_CHECKING:` and
@@ -243,6 +246,13 @@ where that blob may not be fetched. The diff itself still needs the base
   `getattr`/`eval` target across files is undecidable in general; the
   detect-and-degrade modifier plus periodic full runs is the honest
   answer, not a static call graph that drowns in edge cases.
+
+## Related projects
+
+- [Blastradius](https://github.com/baokhang83/blastradius): dependency-based
+  test selection for the JVM (Maven, Gradle, JUnit 5). It selects at class
+  level, validates with mutation testing, and found the same "only the first
+  test gets credited" recorder bug that tia hit with coverage's `sysmon` core.
 
 ## Demo
 
