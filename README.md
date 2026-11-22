@@ -258,3 +258,7 @@ where that blob may not be fetched. The diff itself still needs the base
 
 `examples/calc/` is a tiny suite that proves the behavior end to end.
 See the scenarios in the project history.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

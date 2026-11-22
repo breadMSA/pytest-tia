@@ -4,4 +4,4 @@ Run only the tests affected by your code changes, using a dynamic
 line-level coverage map built per test.
 """
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
