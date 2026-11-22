@@ -3,9 +3,11 @@
 # is the ecosystem convention). The command and import stay `tia`, like
 # pytest-cov installs but you type `--cov`.
 name = "pytest-tia"
-version = "1.2.0"
+version = "1.2.1"
 description = "Test Impact Analysis for pytest — run only the tests your changes affect"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["pytest>=7", "coverage>=7"]
 
@@ -19,7 +21,7 @@ gcs = ["google-cloud-storage>=2.0"]
 tia = "tia.cli:main"
 
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
