@@ -11,6 +11,11 @@ Per file we separate two kinds of change:
 * ``mod`` — existing old lines that were modified or deleted.
 * ``ins`` — anchor lines straddling a pure insertion (no old lines).
 
+Renames are turned off (``--no-renames``): a renamed file shows up as the
+old path deleted plus a new path added. Otherwise a 100%-similar rename has
+no hunks at all and the moved code looks unchanged. A deleted file is keyed
+by its old path, with every old line marked ``mod``.
+
 They are handled differently downstream: a module-level *modification*
 (e.g. changing a constant) is a real impact, but a module-level
 *insertion* (a brand-new function or test) is not.
@@ -22,7 +27,7 @@ from collections import defaultdict
 
 def changed_lines(ref: str = "HEAD", cwd: str = ".") -> dict[str, dict[str, set[int]]]:
     out = subprocess.run(
-        ["git", "diff", "--unified=0", "--no-color", "--relative", ref],
+        ["git", "diff", "--unified=0", "--no-color", "--no-renames", "--relative", ref],
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -33,12 +38,19 @@ def changed_lines(ref: str = "HEAD", cwd: str = ".") -> dict[str, dict[str, set[
         lambda: {"mod": set(), "ins": set()}
     )
     current: str | None = None
+    old_path: str | None = None
     for line in out.stdout.splitlines():
-        if line.startswith("+++ "):
+        if line.startswith("--- "):
             path = line[4:].strip()
-            current = None if path == "/dev/null" else (
-                path[2:] if path.startswith("b/") else path
+            old_path = None if path == "/dev/null" else (
+                path[2:] if path.startswith("a/") else path
             )
+        elif line.startswith("+++ "):
+            path = line[4:].strip()
+            if path == "/dev/null":
+                current = old_path  # deleted: keep the old path
+            else:
+                current = path[2:] if path.startswith("b/") else path
         elif line.startswith("@@") and current:
             try:
                 minus = line.split(" ")[1].lstrip("-")

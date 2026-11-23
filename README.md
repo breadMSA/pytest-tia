@@ -22,6 +22,11 @@ was never mapped — and changing that helper would have skipped them. The
 high number was false negatives wearing a costume. We forced the C tracer
 (`COVERAGE_CORE=ctrace`), every test mapped, and the number fell to the
 truth: **median ~21% skip on Flask** (≈40% mean; cosmetic commits 99%+).
+Then [issue #7](https://github.com/breadMSA/pytest-tia/issues/7) showed
+three more false negatives (a dataclass default, a renamed module, a
+`pytest.ini` change), all from effects that land outside any test. 1.3.0
+fixes them by also selecting every test that imports a module-level
+change, and the honest Flask median fell again, to **~12%**.
 The toy demo could never have shown this — only a real codebase did.
 
 So the Flask number is deliberately the *lower bound*: Flask is small and
@@ -29,9 +34,9 @@ tightly coupled, near the worst case for test selection. We'd rather
 publish the honest floor than a cherry-picked ceiling. But a floor alone
 is misleading too, so we measured the other end: on
 [boltons](benchmark/RESULTS-boltons.md), a modular utility library, the
-honest median skip on real logic changes is **~96%**. Same tool, same
+honest median skip on real logic changes is **~95%**. Same tool, same
 rules — the variable is how decoupled your tests are. The truth is a
-**range, ~21% (worst case) ↔ ~96% (modular)**, and both ends are measured
+**range, ~12% (worst case) ↔ ~95% (modular)**, and both ends are measured
 on real third-party suites, not toys. Per-commit tables and the "I
 distrusted this number first" audits:
 [Flask](benchmark/RESULTS.md) · [boltons](benchmark/RESULTS-boltons.md).
@@ -58,7 +63,16 @@ distrusted this number first" audits:
    Immune to line shifts elsewhere in the file (the whole point of
    going method-level).
 2. **Module-level fallback** — a file had a module-level *modification*
-   (constant, import, class body). Runs every test touching that file.
+   (constant, import, class body, dataclass field default). Runs every
+   test touching that file **and every test whose module imports it**,
+   directly or through other project files. Import-time code runs before
+   any test, so coverage credits no test with it; a test that only reads a
+   constant or builds a dataclass executes no line of that file. The
+   import edges come from a static `ast` scan of the current tree
+   (including `conftest.py` files above each test). A function whose body
+   ran at import time or from a pytest hook during recording (e.g.
+   `LIMIT = load()`) is treated the same way. Deleting or renaming a
+   module counts as a module-level change to the old path.
    Module-level *insertions* (a new function/test) are ignored so they
    don't drag the whole file in.
 3. **Data dependency** — a non-`.py` file changed (config, fixture,
@@ -68,6 +82,11 @@ distrusted this number first" audits:
    false negatives.
 4. **New test** — any collected test not in the map has never been
    measured, so it always runs.
+5. **pytest config** — the pytest section of `pytest.ini`, `.pytest.ini`,
+   `tox.ini`, `setup.cfg` or `pyproject.toml` changed. pytest reads it
+   at startup, outside any test, and settings like `filterwarnings` or
+   `addopts` can change any test's outcome, so the whole suite runs. Edits
+   to other sections (a dependency bump, `[flake8]`) don't count.
 
 A **dynamic-safety modifier** sits on top of rules 1–2: a file flagged
 at record time as using reflection (`getattr` by computed name, `eval`,
@@ -107,6 +126,8 @@ tia record [PATH]          # build the map (run from the repo root)
 tia run [PATH]             # run only affected tests
 tia run --since main       # diff against another ref
 tia run --list             # show the selection, don't run
+tia run --on-empty all     # nothing selected? run the full suite instead
+tia run --on-empty fail    # nothing selected? exit 5 instead of 0
 tia run --report -         # also print a Markdown summary (see CI mode)
 tia status                 # summarize the recorded map
 
@@ -153,7 +174,11 @@ and change only in a major release:
 | `tia.select.select_tests(...)` / `escalate_dynamic(...)` / `recorded_seconds(...)` | selection |
 
 The map format (`.tia/map.json`, `"version": 5`) has these keys: `ref`,
-`tests`, `reads`, `funcmaps`, `dynamic`, plus the optional `durations`.
+`tests`, `reads`, `funcmaps`, `dynamic`, plus the optional `durations`
+and `import_time` (1.3+: functions whose body ran outside any test).
+Since 1.3, `funcmaps` leave class-body lines out; for a map without
+`import_time`, `tia run` ignores the baked tables and reads the base
+blobs with `git show`. Re-record to get the shallow-clone-safe path back.
 New keys are added only as optional fields. Removing or changing a key
 bumps the version.
 
@@ -195,6 +220,11 @@ where that blob may not be fetched. The diff itself still needs the base
 
 ## Known limitations (honest list)
 
+- **Shared fixture setup.** A `session`/`module`-scoped fixture runs its
+  setup once, inside the first test that requests it, so only that test
+  is credited with the fixture's code. Changing the fixture body can skip
+  the other tests that use its value. Run the full suite on a cadence.
+
 - **Insertion anchoring.** Appending a function/test right after an
   existing one anchors on that one's last line, pulling it in as one
   extra test. A bounded false positive, never a false negative.
@@ -226,8 +256,8 @@ where that blob may not be fetched. The diff itself still needs the base
 - [x] **Industrialize** — zero-dep HTTP map store (`tia serve`) + GitHub
   Actions template, so adopting it is a few lines, not a project.
 - [x] **Real-repo benchmark, both ends of the range** — Flask (worst
-  case, ~21%, [`RESULTS.md`](benchmark/RESULTS.md)) and boltons (modular,
-  ~96% on logic changes, [`RESULTS-boltons.md`](benchmark/RESULTS-boltons.md)).
+  case, ~12%, [`RESULTS.md`](benchmark/RESULTS.md)) and boltons (modular,
+  ~95% on logic changes, [`RESULTS-boltons.md`](benchmark/RESULTS-boltons.md)).
   The Flask run also caught a recorder false-negative bug (the `sysmon`
   core dropping contexts).
 - [x] **Method- vs file-level, measured** — method-level runs 26% fewer

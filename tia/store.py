@@ -19,6 +19,13 @@ trusted.
 v5 maps may also carry ``durations``: seconds each test took while recording
 (setup + call + teardown, under coverage). Optional and additive, so older
 readers ignore it and older maps load with an empty table.
+
+v5 maps from tia 1.3+ also carry ``import_time``: per file, the functions
+whose body ran outside any test (called at import time or from a pytest
+hook). A change to one is treated as module-level. Its presence also marks
+``funcmaps`` that leave class-body lines out; for older maps (``None``
+after loading) ``run`` ignores the baked tables, which still credit class
+bodies to the class.
 """
 
 import datetime
@@ -45,6 +52,7 @@ def save_map(
     funcmaps: dict[str, dict[int, str]] | None = None,
     dynamic: dict[str, list[str]] | None = None,
     durations: dict[str, float] | None = None,
+    import_time: dict[str, set[str]] | None = None,
 ) -> str:
     os.makedirs(tia_dir(root), exist_ok=True)
     reads = reads or {}
@@ -70,6 +78,9 @@ def save_map(
         "durations": {
             nodeid: round(secs, 3) for nodeid, secs in sorted((durations or {}).items())
         },
+        "import_time": {
+            path: sorted(quals) for path, quals in sorted((import_time or {}).items())
+        },
     }
     path = map_path(root)
     with open(path, "w", encoding="utf-8") as fh:
@@ -91,4 +102,8 @@ def load_map(root: str) -> dict:
     }
     data["dynamic"] = data.get("dynamic", {})
     data["durations"] = data.get("durations", {})
+    if "import_time" in data:
+        data["import_time"] = {p: set(q) for p, q in data["import_time"].items()}
+    else:
+        data["import_time"] = None  # recorded before 1.3
     return data

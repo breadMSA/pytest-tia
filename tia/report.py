@@ -17,8 +17,11 @@ def impact_tag(
     escalated: dict[str, list[str]],
     data_changes: set[str],
     reads: dict[str, set[str]],
+    config_changes: set[str] | None = None,
 ) -> str:
     """One-line reason a changed file contributed to the selection."""
+    if config_changes and path in config_changes:
+        return "pytest config - runs everything"
     funcs = func_changes.get(path)
     if path in escalated:
         return f"{', '.join(sorted(funcs or []))} -> file-level (dynamic)"
@@ -48,6 +51,7 @@ def render_markdown(
     cosmetic: set[str],
     selected: dict[str, str],
     total: int,
+    config_changes: set[str] | None = None,
 ) -> str:
     """A GitHub-Step-Summary report for one ``tia run``."""
     n = len(selected)
@@ -67,7 +71,7 @@ def render_markdown(
         out += ["### Changed files", "", "| File | Impact |", "|------|--------|"]
         for path in sorted(changed):
             tag = impact_tag(path, func_changes, module_files, escalated,
-                             data_changes, reads)
+                             data_changes, reads, config_changes)
             out.append(f"| `{_cell(path)}` | {_cell(tag)} |")
         out.append("")
 
