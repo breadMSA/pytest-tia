@@ -31,7 +31,7 @@ from collections import defaultdict
 
 import pytest
 
-from tia import cli, diff, resolve, select, store
+from tia import cli, store
 
 PKG_INIT = ""
 
@@ -156,22 +156,10 @@ def recorded_repo(tmp_path_factory):
 
 
 def _run_selection(root, tia_map):
-    """Mirror cli.cmd_run's selection pipeline (no pytest run)."""
+    """cli.cmd_run's selection pipeline (no pytest run)."""
     ref = tia_map.get("ref") or "HEAD"
-    changed = diff.changed_lines(ref, cwd=root)
-    cosmetic = cli._cosmetic_files(changed, ref, root)
-    for p in cosmetic:
-        changed.pop(p, None)
-    func_changes, module_files = resolve.changed_functions(
-        changed, ref, root, tia_map.get("funcmaps"))
-    data_changes = {p for p in changed if not p.endswith(".py")}
-    module_files, _esc = select.escalate_dynamic(
-        func_changes, module_files, tia_map.get("dynamic", {}))
-    all_nodeids = set(tia_map["tests"])
-    selected = select.select_tests(
-        tia_map["tests"], func_changes, module_files, all_nodeids,
-        data_changes, tia_map.get("reads", {}))
-    return set(selected), cosmetic
+    plan = cli.plan_selection(root, tia_map, ref, set(tia_map["tests"]))
+    return set(plan["selected"]), plan["cosmetic"]
 
 
 def _coverage(tia_map):

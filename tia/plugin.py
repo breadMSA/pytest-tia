@@ -212,6 +212,8 @@ class RecordPlugin(_Tracer):
         self.source = source
         self.workers = 0
         self.result: dict[str, dict[str, set[int]]] = {}
+        # relpath -> lines that ran outside any test (import time, hooks)
+        self.outside: dict[str, set[int]] = {}
 
     def pytest_sessionstart(self, session):
         # xdist registers its DSession in a trylast pytest_configure, so by
@@ -249,11 +251,14 @@ class RecordPlugin(_Tracer):
             combiner.combine(strict=False)  # no worker files = nothing recorded
             data = combiner.get_data()
         result: dict[str, dict[str, set[int]]] = {}
+        outside: dict[str, set[int]] = {}
         for abs_path in data.measured_files():
             rel = os.path.relpath(abs_path, self.root).replace(os.sep, "/")
             for lineno, contexts in data.contexts_by_lineno(abs_path).items():
                 for ctx in contexts:
-                    if not ctx:  # empty context = import-time / setup
+                    if not ctx:  # empty context = import time / pytest hooks
+                        outside.setdefault(rel, set()).add(lineno)
                         continue
                     result.setdefault(ctx, {}).setdefault(rel, set()).add(lineno)
         self.result = result
+        self.outside = outside

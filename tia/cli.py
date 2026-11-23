@@ -7,8 +7,8 @@ import sys
 
 import pytest
 
-from tia import (astmap, diff, dynscan, remotestore, report, resolve, select,
-                 semantic, server, store)
+from tia import (astmap, diff, dynscan, imports, pytestcfg, remotestore,
+                 report, resolve, select, semantic, server, store)
 from tia.plugin import RecordPlugin
 
 
@@ -93,9 +93,10 @@ def cmd_record(args) -> int:
 
     quals, funcmaps = _lines_to_quals(root, plugin.result)
     dynamic = _scan_dynamic(root, funcmaps)
+    import_time = _import_time_quals(root, plugin.outside)
     path = store.save_map(root, quals, ref=_head_sha(root),
                           reads=plugin.reads, funcmaps=funcmaps, dynamic=dynamic,
-                          durations=plugin.durations)
+                          durations=plugin.durations, import_time=import_time)
     n_reads = sum(len(v) for v in plugin.reads.values())
     where = f", {plugin.workers} xdist workers" if plugin.workers else ""
     print(f"\n[tia] recorded {len(quals)} tests "
@@ -121,6 +122,21 @@ def _xdist_args() -> list[str]:
     """
     import importlib.util
     return ["-p", "tia._xdist"] if importlib.util.find_spec("xdist") else []
+
+
+def _import_time_quals(root: str, outside: dict[str, set[int]]) -> dict[str, set[str]]:
+    """Functions whose body ran outside any test (import time, pytest hooks)."""
+    out: dict[str, set[str]] = {}
+    for rel, lines in outside.items():
+        try:
+            with open(os.path.join(root, rel), encoding="utf-8") as fh:
+                body = astmap.body_line_to_qualname(fh.read())
+        except (OSError, SyntaxError, ValueError):
+            continue
+        quals = {body[ln] for ln in lines if ln in body}
+        if quals:
+            out[rel] = quals
+    return out
 
 
 def _scan_dynamic(root: str, funcmaps: dict[str, dict[int, str]]) -> dict[str, list[str]]:
@@ -154,34 +170,14 @@ def cmd_run(args) -> int:
     # Default to the ref the map was recorded at, so line numbers line up.
     ref = args.since or tia_map.get("ref") or "HEAD"
 
-    changed = diff.changed_lines(ref, cwd=root)
-    # 乙/戊: drop .py files whose change is non-semantic (comments, format,
-    # docstrings, or provably-dead type-only edits), unless the user opts
-    # out. Best-effort — needs the old blob (skipped if unavailable, e.g. a
-    # shallow clone without the base fetched).
-    cosmetic: set[str] = set()
-    if not args.all_changes:
-        cosmetic = _cosmetic_files(changed, ref, root)
-        for path in cosmetic:
-            del changed[path]
-
-    func_changes, module_files = resolve.changed_functions(
-        changed, ref, root, tia_map.get("funcmaps"))
-    data_changes = {p for p in changed if not p.endswith(".py")}
-    reads = tia_map.get("reads", {})
-
-    # ④ Degrade to file-level where coverage edges can't be trusted, unless
-    # the user explicitly opts out with --trust-dynamic.
-    escalated: dict[str, list[str]] = {}
-    if not args.trust_dynamic:
-        module_files, escalated = select.escalate_dynamic(
-            func_changes, module_files, tia_map.get("dynamic", {}))
-
     all_nodeids = _collect_nodeids(args.path)
-    selected = select.select_tests(
-        tia_map["tests"], func_changes, module_files, all_nodeids,
-        data_changes, reads,
-    )
+    plan = plan_selection(root, tia_map, ref, all_nodeids,
+                          all_changes=args.all_changes,
+                          trust_dynamic=args.trust_dynamic)
+    changed, cosmetic = plan["changed"], plan["cosmetic"]
+    func_changes, module_files = plan["func_changes"], plan["module_files"]
+    data_changes, reads = plan["data_changes"], plan["reads"]
+    escalated, selected = plan["escalated"], plan["selected"]
 
     total = len(all_nodeids)
     n = len(selected)
@@ -189,7 +185,7 @@ def cmd_run(args) -> int:
           f"tests in suite: {total} | selected: {n}")
     for path in sorted(changed):
         tag = report.impact_tag(path, func_changes, module_files, escalated,
-                                data_changes, reads)
+                                data_changes, reads, plan["config_changes"])
         print(f"       ~ {path}: {tag}")
     for path in sorted(cosmetic):
         print(f"       ~ {path}: comments/docstring/format/type-only - ignored")
@@ -208,7 +204,8 @@ def cmd_run(args) -> int:
     if dest:
         md = report.render_markdown(
             ref, list(changed), func_changes, module_files, escalated,
-            data_changes, reads, cosmetic, selected, total)
+            data_changes, reads, cosmetic, selected, total,
+            plan["config_changes"])
         if dest == "-":
             # The report is UTF-8 (it has emoji). Write raw bytes through the
             # buffer so a legacy-codepage console (e.g. Windows cp950) can't
@@ -229,6 +226,18 @@ def cmd_run(args) -> int:
                 print(f"[tia] could not write report to {dest}: {e}", file=sys.stderr)
 
     if not selected:
+        if args.on_empty == "fail":
+            print("[tia] no affected tests - exiting 5 (--on-empty fail).")
+            return 5
+        if args.on_empty == "all":
+            print(f"[tia] no affected tests - running all {total} tests "
+                  f"(--on-empty all).")
+            if args.list:
+                return 0
+            cmd = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
+            if args.path:
+                cmd.append(args.path)
+            return subprocess.run(cmd).returncode
         saved = "100%" if total else "n/a"
         print(f"[tia] no affected tests - skipping {total} tests ({saved} saved).")
         return 0
@@ -244,6 +253,94 @@ def cmd_run(args) -> int:
     cmd = [sys.executable, "-m", "pytest", *sorted(selected),
            "-p", "no:cacheprovider"]
     return subprocess.run(cmd).returncode
+
+
+def _config_changes(changed, ref: str, root: str) -> set[str]:
+    """pytest config files in the diff whose pytest section really changed."""
+    out: set[str] = set()
+    for path in changed:
+        if not pytestcfg.is_config_file(path):
+            continue
+        old = resolve.git_show(ref, path, root)
+        try:
+            with open(os.path.join(root, path), encoding="utf-8") as fh:
+                new = fh.read()
+        except OSError:
+            new = None
+        if pytestcfg.pytest_section_changed(path, old, new):
+            out.add(path)
+    return out
+
+
+def plan_selection(root: str, tia_map: dict, ref: str, all_nodeids: set[str],
+                   all_changes: bool = False, trust_dynamic: bool = False) -> dict:
+    """Diff against ``ref`` and decide what to run. No tests are executed.
+
+    Returns a dict with the selection (``selected``) and every intermediate
+    the terminal and Markdown reports explain.
+    """
+    changed = diff.changed_lines(ref, cwd=root)
+    # Drop .py files whose change is non-semantic (comments, format,
+    # docstrings, or provably-dead type-only edits), unless the user opts
+    # out. Best-effort — needs the old blob (skipped if unavailable, e.g. a
+    # shallow clone without the base fetched).
+    cosmetic: set[str] = set()
+    if not all_changes:
+        cosmetic = _cosmetic_files(changed, ref, root)
+        for path in cosmetic:
+            del changed[path]
+
+    import_time = tia_map.get("import_time")
+    # Maps from before 1.3 baked funcmaps that credit class-body lines to the
+    # class; resolve those through `git show` with the current rules instead.
+    funcmaps = tia_map.get("funcmaps") if import_time is not None else None
+    func_changes, module_files = resolve.changed_functions(
+        changed, ref, root, funcmaps)
+    # A function whose body ran outside any test (at import time or from a
+    # pytest hook) affects every importer, like a module-level line.
+    for path, funcs in func_changes.items():
+        if funcs & (import_time or {}).get(path, set()):
+            module_files.add(path)
+    # A deleted (or renamed-away) module: everything that used it is affected.
+    for path in changed:
+        if path.endswith(".py") and not os.path.exists(os.path.join(root, path)):
+            module_files.add(path)
+    data_changes = {p for p in changed if not p.endswith(".py")}
+    reads = tia_map.get("reads", {})
+
+    # Files whose change reaches every importer. Taken before the dynamic
+    # widening below, which only means "every test touching the file".
+    import_level = set(module_files)
+
+    # Degrade to file-level where coverage edges can't be trusted, unless
+    # the user explicitly opts out with --trust-dynamic.
+    escalated: dict[str, list[str]] = {}
+    if not trust_dynamic:
+        module_files, escalated = select.escalate_dynamic(
+            func_changes, module_files, tia_map.get("dynamic", {}))
+
+    config_changes = _config_changes(changed, ref, root)
+    run_all = (f"pytest config changed: {', '.join(sorted(config_changes))}"
+               if config_changes else None)
+
+    importers = None
+    if import_level and not run_all:
+        nodeids = set(all_nodeids) | set(tia_map["tests"])
+        reach = imports.reachable(root, {n.split("::", 1)[0] for n in nodeids})
+        importers = {t: files & import_level for t, files in reach.items()}
+
+    selected = select.select_tests(
+        tia_map["tests"], func_changes, module_files, all_nodeids,
+        data_changes, reads, importers=importers, run_all=run_all,
+    )
+    if all_nodeids:  # a mapped test that no longer exists can't be run
+        selected = {n: r for n, r in selected.items() if n in all_nodeids}
+    return {
+        "changed": changed, "cosmetic": cosmetic, "func_changes": func_changes,
+        "module_files": module_files, "data_changes": data_changes,
+        "reads": reads, "escalated": escalated, "config_changes": config_changes,
+        "selected": selected,
+    }
 
 
 def cmd_push(args) -> int:
@@ -305,6 +402,9 @@ def main(argv=None) -> int:
                      help="don't widen reflection-heavy files to file-level (less safe)")
     run.add_argument("--all-changes", action="store_true",
                      help="don't ignore comment/docstring/format/type-only edits")
+    run.add_argument("--on-empty", choices=["skip", "all", "fail"], default="skip",
+                     help="when nothing is selected: skip (exit 0, default), "
+                          "run the full suite, or fail with exit code 5")
     run.add_argument("--report", metavar="PATH",
                      help="write a Markdown summary to PATH ('-' for stdout); "
                           "auto-enabled from $GITHUB_STEP_SUMMARY in CI")

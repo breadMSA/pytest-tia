@@ -5,7 +5,7 @@ A real third-party suite, not a toy. Target: [pallets/flask](https://github.com/
 
 > This is the **floor**: Flask is small and tightly-coupled, near the
 > worst case for test selection. For the other end of the honest range —
-> a modular library where tia skips a ~96% median on real logic changes —
+> a modular library where tia skips a ~95% median on real logic changes —
 > see [`RESULTS-boltons.md`](RESULTS-boltons.md). The point of publishing
 > both is that TIA's payoff is a *range* set by how modular your code is.
 
@@ -28,28 +28,43 @@ the honest "one PR against its base" measure.
 
 ## Skip rate (how much of the suite tia skips per commit)
 
-| commit | files | suite | selected | skip |
-|--------|------:|------:|---------:|-----:|
-| a29f88ce | 4 | 482 | 2 | **99.6%** |
-| 3709c4a9 | 3 | 482 | 2 | **99.6%** |
-| da6d075d | 6 | 482 | 2 | **99.6%** |
-| 9368fb3f | 2 | 483 | 38 | 92.1% |
-| 06ea505c | 4 | 483 | 303 | 37.3% |
-| a411a243 | 1 | 486 | 305 | 37.2% |
-| c17f3793 | 6 | 482 | 342 | 29.0% |
-| 7b008869 | 1 | 486 | 426 | 12.3% |
-| c77a5203 | 3 | 482 | 422 | 12.4% |
-| 6a649690 | 6 | 482 | 422 | 12.4% |
-| e82db2ca | 7 | 486 | 429 | 11.7% |
-| eca5fd1d | 4 | 482 | 434 | 10.0% |
-| fbb6f0bc | 10 | 487 | 440 | 9.7% |
-| 36e4a824 | 1 | 483 | 483 | 0.0% |
+Re-measured for **1.3.0** (Python 3.12, same commits), next to the 1.2.1
+numbers. 1.3.0 also selects every test that *imports* a file with a
+module-level change ([#7](https://github.com/breadMSA/pytest-tia/issues/7)):
+import-time code runs before any test, so coverage credits no test with
+it, and 1.2.1 could skip a test that only read a constant or built a
+dataclass from that file.
+
+| commit | files | suite | 1.2.1 selected | 1.3.0 selected | 1.3.0 skip |
+|--------|------:|------:|---------------:|---------------:|-----------:|
+| a29f88ce | 4 | 482 | 2 | 5 | **99.0%** |
+| 3709c4a9 | 3 | 482 | 2 | 5 | **99.0%** |
+| da6d075d | 6 | 482 | 2 | 5 | **99.0%** |
+| 9368fb3f | 2 | 483 | 38 | 41 | 91.5% |
+| 06ea505c | 4 | 483 | 303 | 306 | 36.6% |
+| a411a243 | 1 | 486 | 305 | 309 | 36.4% |
+| c77a5203 | 3 | 482 | 422 | 425 | 11.8% |
+| 7b008869 | 1 | 486 | 426 | 429 | 11.7% |
+| e82db2ca | 7 | 486 | 429 | 429 | 11.7% |
+| eca5fd1d | 4 | 482 | 434 | 436 | 9.5% |
+| fbb6f0bc | 10 | 487 | 440 | 442 | 9.2% |
+| c17f3793 | 6 | 482 | 342 | 482 | 0.0% |
+| 6a649690 | 6 | 482 | 422 | 482 | 0.0% |
+| 36e4a824 | 1 | 483 | 483 | 483 | 0.0% |
 
 ```
-commits measured : 14
-median skip rate : 20.7%
-mean skip rate   : 40.2%
+                   1.2.1    1.3.0
+commits measured :    14       14
+median skip rate : 20.7%    11.8%
+mean skip rate   : 40.2%    36.8%
 ```
+
+The two commits that grew to the whole suite (`c17f3793`, `6a649690`)
+edit module-level code in `sessions.py` / `templating.py`, which every
+test reaches through `import flask`. The +3 on most rows are the same
+rule picking up tests that import a changed module without executing a
+line of it. Those are tests 1.2.1 was skipping without evidence that they
+were safe to skip.
 
 ### Honest reading
 
@@ -64,7 +79,7 @@ with independent feature areas it is far higher than on Flask.
 
 ### Effect of the cosmetic-change filter (乙)
 
-These numbers have the filter **on** (the default). With `--all-changes`
+Measured with 1.2.1. These numbers have the filter **on** (the default). With `--all-changes`
 the same 14 commits give a median of **12.4%** / mean **27.3%**. The gap
 is three commits whose `src/flask` edits were purely docstrings/formatting:
 they go from selecting ~430 tests to **2** (99.6% skip). That's not

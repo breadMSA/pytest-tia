@@ -5,10 +5,15 @@ Four rules:
 1. Function hit — a test executed a function whose body changed.
    Immune to line shifts elsewhere in the file.
 2. Module-level fallback — a file had a module-level *modification*
-   (constant, import, class body). Run every test touching that file.
+   (constant, import, class body). Run every test touching that file, and
+   every test whose module imports it (``importers``): import-time code
+   runs before any test, so coverage credits no test with it.
 3. Data dependency — a non-``.py`` file changed; run every test that
    opened it during recording (the silent-dependency rule).
 4. New test — any collected test not in the map has never been measured.
+
+``run_all`` (a reason string) selects every test, e.g. when pytest's own
+configuration changed.
 """
 
 
@@ -19,9 +24,18 @@ def select_tests(
     all_nodeids: set[str],
     data_changes: set[str] | None = None,
     reads: dict[str, set[str]] | None = None,
+    importers: dict[str, set[str]] | None = None,
+    run_all: str | None = None,
 ) -> dict[str, str]:
-    """Return ``{nodeid: human-readable reason}`` for tests to run."""
+    """Return ``{nodeid: human-readable reason}`` for tests to run.
+
+    ``importers`` maps a test file to every project file it imports
+    (transitively); see ``tia.imports.reachable``.
+    """
     selected: dict[str, str] = {}
+
+    if run_all:
+        return {nodeid: run_all for nodeid in all_nodeids}
 
     for path, changed_funcs in func_changes.items():
         for nodeid, files in map_tests.items():
@@ -35,6 +49,11 @@ def select_tests(
         for nodeid, files in map_tests.items():
             if path in files:
                 selected.setdefault(nodeid, f"module-level change in {path}")
+        if importers:
+            for nodeid in map_tests:  # unmapped tests run anyway (rule 4)
+                if path in importers.get(nodeid.split("::", 1)[0], ()):
+                    selected.setdefault(
+                        nodeid, f"imports {path} (module-level change)")
 
     for path in data_changes or set():
         for nodeid, files in (reads or {}).items():
