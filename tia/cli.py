@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 
@@ -12,15 +13,31 @@ from tia import (astmap, diff, dynscan, imports, pytestcfg, remotestore,
 from tia.plugin import RecordPlugin
 
 
-def _collect_nodeids(path: str | None) -> set[str]:
-    """Ask pytest which tests currently exist (no execution)."""
+def _collect(path: str | None) -> tuple[set[str], set[str]]:
+    """Ask pytest which tests currently exist (no execution).
+
+    Returns ``(nodeids, broken)``: ``broken`` holds the paths pytest could
+    not collect. A change that breaks a module at import time makes every
+    test file importing it fail collection, so those tests vanish from
+    ``nodeids``; without ``broken`` the selection would come out empty and
+    tia would skip a suite that is actually red.
+    """
     cmd = [sys.executable, "-m", "pytest", "--collect-only", "-q",
            "-p", "no:cacheprovider"]
     if path:
         cmd.append(path)
     out = subprocess.run(cmd, capture_output=True, text=True,
                          encoding="utf-8", errors="replace")
-    return {ln.strip() for ln in out.stdout.splitlines() if "::" in ln}
+    nodeids = {ln.strip() for ln in out.stdout.splitlines() if "::" in ln}
+    broken = {m.group(1) for m in re.finditer(
+        r"^ERROR (\S+?)(?: - .*)?$", out.stdout, re.M)}
+    if out.returncode not in (0, 5) and not broken:
+        broken = {path or "."}  # failed, but we can't tell where: run it all
+    return nodeids, broken
+
+
+def _collect_nodeids(path: str | None) -> set[str]:
+    return _collect(path)[0]
 
 
 def _head_sha(cwd: str) -> str | None:
@@ -170,7 +187,7 @@ def cmd_run(args) -> int:
     # Default to the ref the map was recorded at, so line numbers line up.
     ref = args.since or tia_map.get("ref") or "HEAD"
 
-    all_nodeids = _collect_nodeids(args.path)
+    all_nodeids, broken = _collect(args.path)
     plan = plan_selection(root, tia_map, ref, all_nodeids,
                           all_changes=args.all_changes,
                           trust_dynamic=args.trust_dynamic)
@@ -178,6 +195,12 @@ def cmd_run(args) -> int:
     func_changes, module_files = plan["func_changes"], plan["module_files"]
     data_changes, reads = plan["data_changes"], plan["reads"]
     escalated, selected = plan["escalated"], plan["selected"]
+    # Run what pytest couldn't collect so the error fails the build instead
+    # of the affected tests silently dropping out of the selection.
+    for p in sorted(broken):
+        selected[p] = "collection error"
+        print(f"[tia] WARNING: pytest could not collect {p}; running it so "
+              f"the error is reported.", file=sys.stderr)
 
     total = len(all_nodeids)
     n = len(selected)

@@ -195,3 +195,27 @@ def test_dynamic_widening_does_not_reach_importers(tmp_path):
     # g ran in no test, but dyn.py is dynamic: widened to the tests touching
     # it (test_f), not to test_other, which only imports it.
     assert set(_select(root, tia_map)) == {"test_f.py::test_f"}
+
+
+def test_import_error_is_run_not_skipped(tmp_path, monkeypatch, capsys):
+    """A change that breaks a module at import time must not skip the suite.
+
+    The test file importing it fails collection, so its tests vanish from
+    the collected set and the selection would come out empty (found by
+    ``benchmark/mutation.py`` on boltons).
+    """
+    root = str(tmp_path)
+    _record(root, {"calc.py": "SEP = '[' + ']'\n\n"
+                              "def add(a, b):\n    return a + b\n",
+                   "test_calc.py": "from calc import add\n\n"
+                                   "def test_add():\n    assert add(1, 2) == 3\n",
+                   "test_other.py": "def test_other():\n    assert True\n"})
+    _write(root, {"calc.py": "SEP = '[' - ']'\n\n"
+                             "def add(a, b):\n    return a + b\n"})
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("PYTHONPATH", root)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert cli.main(["run", "--list"]) == 0
+    out = capsys.readouterr().out
+    assert "test_calc.py   (collection error)" in out
+    assert cli.main(["run"]) != 0  # the real run fails on the import error
