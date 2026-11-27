@@ -33,13 +33,13 @@ So the Flask number is deliberately the *lower bound*: Flask is small and
 tightly coupled, near the worst case for test selection. We'd rather
 publish the honest floor than a cherry-picked ceiling. But a floor alone
 is misleading too, so we measured the other end: on
-[boltons](benchmark/RESULTS-boltons.md), a modular utility library, the
+[boltons](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS-boltons.md), a modular utility library, the
 honest median skip on real logic changes is **~95%**. Same tool, same
 rules — the variable is how decoupled your tests are. The truth is a
 **range, ~12% (worst case) ↔ ~95% (modular)**, and both ends are measured
 on real third-party suites, not toys. Per-commit tables and the "I
 distrusted this number first" audits:
-[Flask](benchmark/RESULTS.md) · [boltons](benchmark/RESULTS-boltons.md).
+[Flask](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS.md) · [boltons](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS-boltons.md).
 
 ## How it works
 
@@ -209,7 +209,7 @@ the PR. (`--report <path>`, or `--report -` for stdout, forces it
 anywhere.)
 
 A ready-to-copy GitHub Actions workflow is in
-[`examples/ci/github-actions.yml`](examples/ci/github-actions.yml).
+[`examples/ci/github-actions.yml`](https://github.com/breadMSA/pytest-tia/blob/main/examples/ci/github-actions.yml).
 
 `run` resolves the diff against line→function tables **baked into the
 map** at record time, so it never needs `git show` on the base blob —
@@ -256,13 +256,13 @@ where that blob may not be fetched. The diff itself still needs the base
 - [x] **Industrialize** — zero-dep HTTP map store (`tia serve`) + GitHub
   Actions template, so adopting it is a few lines, not a project.
 - [x] **Real-repo benchmark, both ends of the range** — Flask (worst
-  case, ~12%, [`RESULTS.md`](benchmark/RESULTS.md)) and boltons (modular,
-  ~95% on logic changes, [`RESULTS-boltons.md`](benchmark/RESULTS-boltons.md)).
+  case, ~12%, [`RESULTS.md`](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS.md)) and boltons (modular,
+  ~95% on logic changes, [`RESULTS-boltons.md`](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS-boltons.md)).
   The Flask run also caught a recorder false-negative bug (the `sysmon`
   core dropping contexts).
 - [x] **Method- vs file-level, measured** — method-level runs 26% fewer
   tests on Flask (big central files) and 7% fewer on boltons (modular),
-  [`RESULTS-granularity.md`](benchmark/RESULTS-granularity.md).
+  [`RESULTS-granularity.md`](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS-granularity.md).
 - [x] **Cosmetic-change filter** — ignore comment/docstring/format-only
   edits so they select nothing instead of a whole file.
 - [x] **Type-only filter (v1.1)** — also ignore `if TYPE_CHECKING:` and
@@ -291,4 +291,4 @@ See the scenarios in the project history.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/breadMSA/pytest-tia/blob/main/LICENSE).

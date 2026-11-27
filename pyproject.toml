@@ -3,13 +3,35 @@
 # is the ecosystem convention). The command and import stay `tia`, like
 # pytest-cov installs but you type `--cov`.
 name = "pytest-tia"
-version = "1.3.0"
+version = "1.3.1"
 description = "Test Impact Analysis for pytest — run only the tests your changes affect"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["pytest>=7", "coverage>=7"]
+keywords = ["pytest", "test-impact-analysis", "test-selection", "regression-test-selection", "coverage", "ci"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
+
+[project.urls]
+Homepage = "https://github.com/breadMSA/pytest-tia"
+Repository = "https://github.com/breadMSA/pytest-tia"
+Issues = "https://github.com/breadMSA/pytest-tia/issues"
+Benchmarks = "https://github.com/breadMSA/pytest-tia/tree/main/benchmark"
 
 [project.optional-dependencies]
 # Only needed if you point a remote at an s3:// or gs:// URL. The core
