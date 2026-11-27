@@ -89,5 +89,6 @@ In boltons each module has its own test file, so the file already
 approximates the function, and the extra precision buys ~7%.
 
 The extra precision isn't free on safety: a finer map has more ways to miss
-a test. The next step is a mutation pass at both granularities to check
-that method-level adds no misses on these windows.
+a test. The mutation pass at both granularities, on these same windows,
+is in [`RESULTS-mutation.md`](RESULTS-mutation.md): method-level adds no
+misses.

@@ -87,6 +87,10 @@ distrusted this number first" audits:
    at startup, outside any test, and settings like `filterwarnings` or
    `addopts` can change any test's outcome, so the whole suite runs. Edits
    to other sections (a dependency bump, `[flake8]`) don't count.
+6. **Collection error** — a file pytest can't collect (typically a change
+   that breaks a module at import time) is always run, so the error
+   fails the build. Its tests would otherwise drop out of the collected
+   set and the run would skip a suite that is actually red.
 
 A **dynamic-safety modifier** sits on top of rules 1–2: a file flagged
 at record time as using reflection (`getattr` by computed name, `eval`,
@@ -263,6 +267,11 @@ where that blob may not be fetched. The diff itself still needs the base
 - [x] **Method- vs file-level, measured** — method-level runs 26% fewer
   tests on Flask (big central files) and 7% fewer on boltons (modular),
   [`RESULTS-granularity.md`](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS-granularity.md).
+- [x] **Mutation pass at both granularities** — bugs planted on the lines
+  each commit added; method-level misses none that file-level catches,
+  [`RESULTS-mutation.md`](https://github.com/breadMSA/pytest-tia/blob/main/benchmark/RESULTS-mutation.md).
+  It also caught a real gap, fixed in v1.3.2: an import-time break made
+  the affected tests fail collection, and tia skipped them.
 - [x] **Cosmetic-change filter** — ignore comment/docstring/format-only
   edits so they select nothing instead of a whole file.
 - [x] **Type-only filter (v1.1)** — also ignore `if TYPE_CHECKING:` and
